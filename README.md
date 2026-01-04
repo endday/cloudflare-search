@@ -2,7 +2,7 @@
 
 > 基于 Cloudflare Workers 的聚合搜索 API 服务
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Yrobot/cloudflare-search)
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://sink.proddig.com/cloudflare-search-github)
 
 ## 特性
 
