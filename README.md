@@ -2,11 +2,14 @@
 
 > 基于 Cloudflare Workers 的聚合搜索 API 服务
 
+> 支持 **MCP (Model Context Protocol)**，让 AI 助手拥有实时联网搜索能力
+
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://sink.proddig.com/cloudflare-search-github)
 
 ## 特性
 
 - 🔍 **多引擎聚合** - 同时使用多个搜索引擎（Google、Brave、DuckDuckGo、Bing）
+- 🤖 **AI 增强 (MCP)** - 原生支持 Model Context Protocol，一键为 Claude Code/Desktop 添加搜索工具
 - ⚡ **并行搜索** - 所有搜索引擎同时请求，快速返回结果
 - 🛡️ **容错机制** - 单个引擎失败不影响其他引擎，自动标记无响应引擎
 - ⏱️ **超时控制** - 可配置请求超时时间，避免长时间等待
