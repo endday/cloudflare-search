@@ -24,7 +24,9 @@ const CF_SEARCH_TOKEN = process.env.CF_SEARCH_TOKEN;
 
 if (!CF_SEARCH_URL) {
   console.error("Error: CF_SEARCH_URL environment variable is required");
-  console.error("Example: export CF_SEARCH_URL=https://your-worker.workers.dev");
+  console.error(
+    "Example: export CF_SEARCH_URL=https://your-worker.workers.dev",
+  );
   process.exit(1);
 }
 
@@ -64,14 +66,35 @@ async function searchAPI(query, engines = null) {
 const server = new Server(
   {
     name: "cloudflare-search",
-    version: "1.0.0",
+    version: "1.1.0",
   },
   {
     capabilities: {
       tools: {},
     },
-  }
+  },
 );
+
+const SEARCH_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    query: {
+      type: "string",
+      description: "The search query string",
+    },
+    engines: {
+      type: "array",
+      items: {
+        type: "string",
+        enum: ["google", "brave", "duckduckgo", "bing"],
+      },
+      description:
+        "Optional: Array of search engines to use. If not specified, uses default engines. " +
+        "Available engines: google, brave, duckduckgo, bing",
+    },
+  },
+  required: ["query"],
+};
 
 /**
  * Handler for listing available tools
@@ -80,30 +103,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
+        name: "web_search",
+        description:
+          "Search the web for current information, news, or any topic. " +
+          "Uses multiple engines (Brave, DuckDuckGo, Google, Bing) simultaneously " +
+          "and returns aggregated results with source URLs. " +
+          "Use this when you need real-time information not in your training data. ",
+        inputSchema: SEARCH_INPUT_SCHEMA,
+      },
+      {
         name: "search",
         description:
           "Search across multiple search engines (Google, Brave, DuckDuckGo, Bing) and return aggregated results. " +
           "This tool provides comprehensive search results from multiple sources, with source attribution for each result.",
-        inputSchema: {
-          type: "object",
-          properties: {
-            query: {
-              type: "string",
-              description: "The search query string",
-            },
-            engines: {
-              type: "array",
-              items: {
-                type: "string",
-                enum: ["google", "brave", "duckduckgo", "bing"],
-              },
-              description:
-                "Optional: Array of search engines to use. If not specified, uses default engines. " +
-                "Available engines: google, brave, duckduckgo, bing",
-            },
-          },
-          required: ["query"],
-        },
+        inputSchema: SEARCH_INPUT_SCHEMA,
       },
     ],
   };
@@ -113,7 +126,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
  * Handler for tool execution
  */
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (request.params.name !== "search") {
+  if (
+    request.params.name !== "search" &&
+    request.params.name !== "web_search"
+  ) {
     throw new Error(`Unknown tool: ${request.params.name}`);
   }
 

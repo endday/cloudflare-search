@@ -1,220 +1,268 @@
 # Cloudflare Search
 
-> 基于 Cloudflare Workers 的聚合搜索 API 服务
+English | [中文](./README.zh.md)
 
-> 支持 **MCP (Model Context Protocol)**，让 AI 助手拥有实时联网搜索能力
+> An aggregated search API service based on Cloudflare Workers
+
+> Supports **MCP (Model Context Protocol)**, giving AI assistants (OpenClaw, Claude Code, Codex, OpenCode) real-time web search capabilities
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://sink.proddig.com/cloudflare-search-github)
 
-## 特性
+## Features
 
-- 🔍 **多引擎聚合** - 同时使用多个搜索引擎（Google、Brave、DuckDuckGo、Bing）
-- 🤖 **AI 增强 (MCP)** - 原生支持 Model Context Protocol，一键为 Claude Code/Desktop 添加搜索工具
-- ⚡ **并行搜索** - 所有搜索引擎同时请求，快速返回结果
-- 🛡️ **容错机制** - 单个引擎失败不影响其他引擎，自动标记无响应引擎
-- ⏱️ **超时控制** - 可配置请求超时时间，避免长时间等待
-- 🔒 **Token 鉴权** - 支持 Token 认证，保护服务不被滥用
-- 🌍 **CORS 支持** - 完整的跨域资源共享支持
-- 🎨 **Web 界面** - 提供简洁的搜索界面，方便测试
-- ⚡ **零成本运行** - Cloudflare Workers 免费版每天 10 万次请求
+- 🔍 **Multi-engine Aggregation** - Use multiple search engines at the same time (Google, Brave, DuckDuckGo, Bing)
+- 🤖 **AI Enhanced (MCP)** - Native support for Model Context Protocol, one-click search tool integration for **OpenClaw** / **Claude Code** / **Codex**
+- ⚡ **Parallel Search** - All search engines are requested concurrently for faster results
+- 🛡️ **Fault Tolerance** - Failure of a single engine does not affect others; unresponsive engines are automatically marked
+- ⏱️ **Timeout Control** - Configurable request timeout to avoid long waits
+- 🔒 **Token Authentication** - Supports token auth to protect the service from abuse
+- 🌍 **CORS Support** - Full cross-origin resource sharing support
+- 🎨 **Web Interface** - Provides a clean search UI for easy testing
+- ⚡ **Zero-cost Operation** - Cloudflare Workers free tier supports 100,000 requests per day
 
-## 页面展示
+## Page Preview
 
 ![screenshot](./screenshot.png)
 
-## 安装方式
+## MCP Integration: Use in OpenClaw / Claude Code / AI Agents
 
-### 方式一：一键部署（推荐）
+With MCP (Model Context Protocol), AI assistants can directly call your search service and get real-time search results.
 
-点击上方 "Deploy to Cloudflare Workers" 按钮，按照提示完成部署。
+### Installation and Configuration
 
-### 方式二：使用 Wrangler CLI
+#### 1. Deploy the Service
+
+First, follow the guide to [Deploy Cloudflare Search](#installation-methods)
+
+#### 2. Add MCP Server Configuration
+
+Edit your config file ([configuration guide](https://modelcontextprotocol.io/quickstart/user)):
+
+- **OpenClaw**: `~/.openclaw/openclaw.json`
+- **Claude Code**: `~/.claude/config.json` / `~/.claude.json`
+- **Claude Desktop macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Claude Desktop Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+	"mcpServers": {
+		"cloudflare-search": {
+			"command": "npx",
+			"args": ["-y", "@yrobot/cf-search-mcp"],
+			"env": {
+				"CF_SEARCH_URL": "https://your-worker.workers.dev",
+				"CF_SEARCH_TOKEN": "your-token-here"
+			}
+		}
+	}
+}
+```
+
+**Environment Variables**:
+
+- `CF_SEARCH_URL`: Worker deployment URL (required)
+- `CF_SEARCH_TOKEN`: Auth token (required if your Worker has `TOKEN` configured)
+
+#### 3. Verify Installation
+
+- **OpenClaw**: Run `openclaw gateway restart` + `openclaw mcp list` and check that `cloudflare-search` appears
+- **Claude Code**:
+	- Run `/mcp` in Claude Code, and you should see the `cloudflare-search` tool.
+	- Or run `claude mcp list`; seeing `cloudflare-search: npx -y @yrobot/cf-search-mcp@latest - ✓ Connected` means setup is successful
+
+## Installation Methods
+
+### Method 1: One-click Deployment (Recommended)
+
+Click the "Deploy to Cloudflare Workers" button above and follow the prompts.
+
+### Method 2: Use Wrangler CLI
 
 ```bash
-# 1. 安装 Wrangler
+# 1. Install Wrangler
 npm install -g wrangler
 
-# 2. 登录 Cloudflare
+# 2. Login to Cloudflare
 wrangler login
 
-# 3. 克隆仓库
+# 3. Clone the repository
 git clone https://github.com/Yrobot/cloudflare-search.git
 cd cloudflare-search
 
-# 4. 部署
+# 4. Deploy
 wrangler deploy
 ```
 
-### 方式三：使用 Cloudflare Dashboard
+### Method 3: Use Cloudflare Dashboard
 
-1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
-2. 进入 **Workers & Pages**
-3. 点击 **Create Application** > **Create Worker**
-4. 点击 **Upload** 上传本地代码文件夹
-   - 选择克隆的 `cloudflare-search` 文件夹
-   - 或者手动复制 `worker.js`、`envs.js`、`utils/` 等文件
-5. 点击 **Save and Deploy**
+1. Sign in to [Cloudflare Dashboard](https://dash.cloudflare.com/)
+2. Go to **Workers & Pages**
+3. Click **Create Application** > **Create Worker**
+4. Click **Upload** to upload your local code folder
+	 - Select the cloned `cloudflare-search` folder
+	 - Or manually copy `worker.js`, `envs.js`, `utils/`, and other files
+5. Click **Save and Deploy**
 
-### 获取访问地址
+### Get Access URL
 
-部署成功后，你会获得一个 Worker URL：
+After deployment, you will get a Worker URL:
 
 ```
 https://your-worker-name.your-subdomain.workers.dev
 ```
 
-**注意**：这个自带的域名在某些区域可能无法直接访问，建议绑定自己的域名使用。
+**Note**: The default domain may not be directly accessible in some regions. It is recommended to bind your own custom domain.
 
-## 使用方式
+## Usage
 
-### 方式 1: Web 界面
+### Method 1: Web Interface
 
-直接访问你的 Worker URL，在网页界面输入搜索关键词：
+Open your Worker URL directly and enter search keywords in the web UI:
 
 ```
 https://$YOUR-DOMAIN/
 ```
 
-### 方式 2: API 请求（GET）
+### Method 2: API Request (GET)
 
-使用查询参数进行搜索：
+Search using query parameters:
 
 ```bash
-# 基本搜索
+# Basic search
 curl "https://$YOUR-DOMAIN/search?q=cloudflare"
 
-# 指定搜索引擎
+# Specify search engines
 curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=google,brave"
 
-# 使用 token 鉴权（如果配置了 TOKEN 环境变量）
+# Use token authentication (if TOKEN env var is configured)
 curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
 ```
 
-### 方式 3: API 请求（POST）
+### Method 3: API Request (POST)
 
-通过 POST 表单提交搜索：
+Submit search by POST form:
 
 ```bash
 curl -X POST "https://$YOUR-DOMAIN/search" \
-  -d "q=cloudflare" \
-  -d "engines=google,brave"
-  -d "token=$YOUR-TOKEN" # 如果配置了 TOKEN 环境变量
+	-d "q=cloudflare" \
+	-d "engines=google,brave"
+	-d "token=$YOUR-TOKEN" # if TOKEN env var is configured
 ```
 
-## API 接口说明
+## API Reference
 
-### `/search` 接口
+### `/search` Endpoint
 
-用于执行搜索查询并返回聚合结果。
+Used to execute search queries and return aggregated results.
 
-#### 请求参数
+#### Request Parameters
 
-| 参数          | 类型     | 必填   | 说明                                      | 示例           |
-| ------------- | -------- | ------ | ----------------------------------------- | -------------- |
-| `q` / `query` | `string` | yes    | 搜索关键词                                | `cloudflare`   |
-| `engines`     | `string` | no     | 指定搜索引擎，多个用逗号分隔              | `google,brave` |
-| `token`       | `string` | no/yse | 访问令牌（当配置了 TOKEN 环境变量时必填） | `$YOUR-TOKEN`  |
+| Parameter     | Type     | Required | Description                                                | Example          |
+| ------------- | -------- | -------- | ---------------------------------------------------------- | ---------------- |
+| `q` / `query` | `string` | yes      | Search keyword                                             | `cloudflare`     |
+| `engines`     | `string` | no       | Specify search engines, separated by commas               | `google,brave`   |
+| `token`       | `string` | no/yes   | Access token (required when `TOKEN` env var is configured) | `$YOUR-TOKEN`    |
 
-**支持的搜索引擎**：
+**Supported Search Engines**:
 
-- `google` - Google 搜索（需要配置 API Key）
-- `brave` - Brave 搜索
-- `duckduckgo` - DuckDuckGo 搜索
-- `bing` - Bing 搜索
+- `google` - Google Search (requires API Key configuration)
+- `brave` - Brave Search
+- `duckduckgo` - DuckDuckGo Search
+- `bing` - Bing Search
 
-#### 返回值
+#### Response Value
 
 ```typescript
 {
-  query: string;                    // 搜索关键词
-  number_of_results: number;        // 结果总数
-  enabled_engines: string[];        // 启用的搜索引擎列表
-  unresponsive_engines: string[];   // 无响应的搜索引擎列表
-  results: Array<{
-    title: string;                  // 结果标题
-    description: string;            // 结果描述
-    url: string;                    // 结果链接
-    engine: string;                 // 来源引擎
-  }>;
+	query: string;                    // Search keyword
+	number_of_results: number;        // Total number of results
+	enabled_engines: string[];        // Enabled search engine list
+	unresponsive_engines: string[];   // Unresponsive search engine list
+	results: Array<{
+		title: string;                  // Result title
+		description: string;            // Result description
+		url: string;                    // Result link
+		engine: string;                 // Source engine
+	}>;
 }
 ```
 
-#### 请求示例
+#### Request Examples
 
 ```bash
-# GET 请求
+# GET request
 curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=google,brave"
 
-# POST 请求
+# POST request
 curl -X POST "https://$YOUR-DOMAIN/search" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "q=cloudflare&engines=google,brave"
+	-H "Content-Type: application/x-www-form-urlencoded" \
+	-d "q=cloudflare&engines=google,brave"
 ```
 
-#### 响应示例
+#### Response Example
 
 ```json
 {
-  "query": "cloudflare",
-  "number_of_results": 15,
-  "enabled_engines": ["google", "brave", "duckduckgo"],
-  "unresponsive_engines": [],
-  "results": [
-    {
-      "title": "Cloudflare - The Web Performance & Security Company",
-      "description": "Cloudflare is on a mission to help build a better Internet...",
-      "url": "https://www.cloudflare.com/",
-      "engine": "google"
-    },
-    {
-      "title": "Cloudflare Workers",
-      "description": "Deploy serverless code instantly across the globe...",
-      "url": "https://workers.cloudflare.com/",
-      "engine": "brave"
-    }
-  ]
+	"query": "cloudflare",
+	"number_of_results": 15,
+	"enabled_engines": ["google", "brave", "duckduckgo"],
+	"unresponsive_engines": [],
+	"results": [
+		{
+			"title": "Cloudflare - The Web Performance & Security Company",
+			"description": "Cloudflare is on a mission to help build a better Internet...",
+			"url": "https://www.cloudflare.com/",
+			"engine": "google"
+		},
+		{
+			"title": "Cloudflare Workers",
+			"description": "Deploy serverless code instantly across the globe...",
+			"url": "https://workers.cloudflare.com/",
+			"engine": "brave"
+		}
+	]
 }
 ```
 
-## 搜索引擎说明
+## Search Engine Notes
 
-### 支持的搜索引擎
+### Supported Search Engines
 
-| 引擎           | 说明                     | 是否需要配置                  | 默认启用        |
-| -------------- | ------------------------ | ----------------------------- | --------------- |
-| **Google**     | Google Custom Search API | 需要 GOOGLE_API_KEY GOOGLE_CX | yes             |
-| **Brave**      | Brave Search API         | -                             | yes             |
-| **DuckDuckGo** | DuckDuckGo 即时答案 API  | -                             | yes             |
-| **Bing**       | Bing 搜索                | -                             | no (结果不稳定) |
+| Engine         | Description                  | Configuration Required          | Enabled by Default |
+| -------------- | ---------------------------- | ------------------------------- | ------------------ |
+| **Google**     | Google Custom Search API     | Requires `GOOGLE_API_KEY` and `GOOGLE_CX` | yes                |
+| **Brave**      | Brave Search API             | -                               | yes                |
+| **DuckDuckGo** | DuckDuckGo Instant Answer API | -                             | yes                |
+| **Bing**       | Bing Search                  | -                               | no (unstable results) |
 
-### 基本工作方案
+### Basic Working Approach
 
-1. **并行请求**：所有启用的搜索引擎同时发起请求，提高响应速度
-2. **超时控制**：单个引擎超时不影响其他引擎，默认 3 秒超时
-3. **结果聚合**：将所有成功返回的结果合并，标记来源引擎
-4. **容错处理**：记录无响应的引擎，返回部分结果而不是完全失败
+1. **Parallel Requests**: All enabled search engines are requested concurrently to improve response speed
+2. **Timeout Control**: Timeout of a single engine does not affect others; default timeout is 3 seconds
+3. **Result Aggregation**: Merge all successfully returned results and mark their source engine
+4. **Fault Tolerance**: Record unresponsive engines and return partial results instead of failing completely
 
-## 环境变量配置
+## Environment Variable Configuration
 
-### 环境变量说明
+### Environment Variables
 
-| 变量名            | 类型     | 默认值   | 说明                                              |
-| ----------------- | -------- | -------- | ------------------------------------------------- |
-| `DEFAULT_TIMEOUT` | `string` | `"3000"` | 单个搜索引擎的超时时间（毫秒）                    |
-| `GOOGLE_API_KEY`  | `string` | `null`   | https://console.cloud.google.com/apis/credentials |
-| `GOOGLE_CX`       | `string` | `null`   | https://programmablesearchengine.google.com/      |
-| `TOKEN`           | `string` | `null`   | 访问令牌，配置后启用鉴权，保护服务不被滥用        |
+| Variable Name      | Type     | Default  | Description                                         |
+| ------------------ | -------- | -------- | --------------------------------------------------- |
+| `DEFAULT_TIMEOUT`  | `string` | `"3000"` | Timeout per search engine request (milliseconds)   |
+| `GOOGLE_API_KEY`   | `string` | `null`   | https://console.cloud.google.com/apis/credentials  |
+| `GOOGLE_CX`        | `string` | `null`   | https://programmablesearchengine.google.com/       |
+| `TOKEN`            | `string` | `null`   | Access token. Enables auth when configured to prevent abuse |
 
-**注意**：
+**Notes**:
 
-- Google Custom Search API 免费版每天限制 100 次请求
-- `TOKEN` 配置后，所有请求都需要提供有效的 token
+- Google Custom Search API free tier is limited to 100 requests per day
+- After `TOKEN` is configured, all requests must provide a valid token
 
-### 配置方式
+### Configuration Methods
 
-#### 方式 1: wrangler.toml 文件
+#### Method 1: `wrangler.toml` File
 
-编辑 `wrangler.toml` 文件中的 `[vars]` 部分：
+Edit the `[vars]` section in `wrangler.toml`:
 
 ```toml
 [vars]
@@ -224,218 +272,165 @@ DEFAULT_TIMEOUT = "3000"
 TOKEN = "your-secret-token-here"
 ```
 
-#### 方式 2: Cloudflare Dashboard
+#### Method 2: Cloudflare Dashboard
 
-1. 进入 Worker 设置页面
-2. 找到 **Environment Variables** 部分
-3. 添加变量并保存
+1. Go to the Worker settings page
+2. Find the **Environment Variables** section
+3. Add variables and save
 
-## 使用场景
+## Use Cases
 
-### 1. 聚合搜索服务
+### 1. Aggregated Search Service
 
-构建自己的搜索聚合 API，整合多个搜索引擎结果：
+Build your own aggregated search API and combine results from multiple search engines:
 
 ```javascript
 const response = await fetch(
-  "https://$YOUR-DOMAIN/search?q=javascript&engines=google,brave"
+	"https://$YOUR-DOMAIN/search?q=javascript&engines=google,brave",
 );
 const data = await response.json();
-console.log(`找到 ${data.number_of_results} 个结果`);
+console.log(`Found ${data.number_of_results} results`);
 ```
 
-### 2. 前端搜索功能
+### 2. Frontend Search Feature
 
-为网站或应用添加搜索功能：
+Add search functionality to your website or app:
 
 ```javascript
 async function search(query) {
-  const response = await fetch(
-    `https://$YOUR-DOMAIN/search?q=${encodeURIComponent(query)}`
-  );
-  const data = await response.json();
-  return data.results;
+	const response = await fetch(
+		`https://$YOUR-DOMAIN/search?q=${encodeURIComponent(query)}`,
+	);
+	const data = await response.json();
+	return data.results;
 }
 ```
 
-### 3. 数据采集与分析
+### 3. Data Collection and Analysis
 
-收集多个搜索引擎的结果进行对比分析：
+Collect results from multiple search engines for comparative analysis:
 
 ```javascript
 const engines = ["google", "brave", "duckduckgo"];
 const results = await fetch(
-  `https://$YOUR-DOMAIN/search?q=AI&engines=${engines.join(",")}`
+	`https://$YOUR-DOMAIN/search?q=AI&engines=${engines.join(",")}`,
 );
 const data = await results.json();
 
-// 按引擎分组
+// Group by engine
 const byEngine = data.results.reduce((acc, result) => {
-  acc[result.engine] = acc[result.engine] || [];
-  acc[result.engine].push(result);
-  return acc;
+	acc[result.engine] = acc[result.engine] || [];
+	acc[result.engine].push(result);
+	return acc;
 }, {});
 ```
 
-## MCP 集成
+## MCP Integration
 
-通过 MCP (Model Context Protocol) 让 AI 助手直接调用你的搜索服务，获取实时搜索结果。
+With MCP (Model Context Protocol), AI assistants can directly call your search service and get real-time search results.
 
-### 安装配置
+## Notes and Reminders
 
-#### 1. 添加 MCP 服务器配置
+### 🚨 Important Notes
 
-编辑配置文件（[配置指南](https://modelcontextprotocol.io/quickstart/user)）：
+1. **Use a Custom Domain**
+	 - The default Cloudflare `*.workers.dev` domain may be inaccessible in some regions
+	 - It is **strongly recommended** to bind your own domain for a better access experience
+	 - In Worker settings, click **Triggers** > **Add Custom Domain** to add a custom domain
 
-- **Claude Code**: `~/.claude/config.json` / `~/.claude.json`
-- **Claude Desktop macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Claude Desktop Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+2. **Search Engine Limits**
+	 - Google API free tier is limited to 100 requests per day
+	 - Other search engines generally do not have strict limits, but please use responsibly
+	 - Frequent requests may cause temporary rate limiting
 
-```json
-{
-  "mcpServers": {
-    "cloudflare-search": {
-      "command": "npx",
-      "args": ["-y", "@yrobot/cf-search-mcp"],
-      "env": {
-        "CF_SEARCH_URL": "https://your-worker.workers.dev",
-        "CF_SEARCH_TOKEN": "your-token-here"
-      }
-    }
-  }
-}
-```
+3. **Timeout Settings**
+	 - Default timeout per engine is 3 seconds
+	 - Can be adjusted with `DEFAULT_TIMEOUT`
+	 - Do not set it too high to avoid long overall response times
 
-**环境变量说明**：
+### 🔒 Security Configuration
 
-- `CF_SEARCH_URL`: Worker 部署地址（必填）
-- `CF_SEARCH_TOKEN`: 鉴权 Token（如果 Worker 配置了 TOKEN 则必填）
+#### Enable Authentication
 
-#### 2. 重启应用
+1. Configure the `TOKEN` environment variable to protect your service from abuse:
 
-保存配置后重启 Claude Code 或 Claude Desktop。
+- Configure `TOKEN` in `wrangler.toml`
+- Configure `TOKEN` in Cloudflare Worker Dashboard
 
-#### 3. 验证安装
-
-- 在 Claude Code 中运行 `/mcp` 命令，应该能看到 `cloudflare-search` 工具。
-- 或 使用 `claude mcp list`, 看到 `cloudflare-search: npx -y @yrobot/cf-search-mcp@latest - ✓ Connected` 说明配置成功
-
-### 使用示例
-
-```
-用 cloudflare-search 搜索 "Cloudflare Workers 最佳实践"
-```
-
-```
-用 cloudflare-search 搜索 "Next.js 14 新特性"
-```
-
-AI 会返回来自多个搜索引擎的聚合结果，包括标题、描述和链接。
-
-## 注意与提醒
-
-### 🚨 重要提示
-
-1. **使用自定义域名**
-
-   - Cloudflare 默认的 `*.workers.dev` 域名在某些地区可能无法访问
-   - **强烈建议**绑定自己的域名以获得更好的访问体验
-   - 在 Worker 设置中点击 **Triggers** > **Add Custom Domain** 添加自定义域名
-
-2. **搜索引擎限制**
-
-   - Google API 免费版每天限制 100 次请求
-   - 其他搜索引擎一般没有严格限制，但请合理使用
-   - 频繁请求可能导致被临时限制访问
-
-3. **超时设置**
-   - 默认单个引擎超时 3 秒
-   - 可通过环境变量 `DEFAULT_TIMEOUT` 调整
-   - 建议不要设置过长，避免整体响应时间过长
-
-### 🔒 安全配置
-
-#### 启用鉴权
-
-1. 配置 `TOKEN` 环境变量 来保护你的服务不被滥用：
-
-- 利用 wrangler.toml 配置 TOKEN 环境变量
-- 通过 Cloudflare Worker Dashboard 配置 TOKEN 环境变量
-
-2. 在请求时传入 token：
+2. Pass token in requests:
 
 ```bash
-# 访问首页
+# Access homepage
 https://$YOUR-DOMAIN?token=$YOUR-TOKEN
 
-# 使用 query/body 的 token 参数 请求 API
+# Request API with token parameter in query/body
 curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
 
 curl -X POST "https://$YOUR-DOMAIN/search" \
-  -d "q=cloudflare" \
-  -d "token=$YOUR-TOKEN"
+	-d "q=cloudflare" \
+	-d "token=$YOUR-TOKEN"
 ```
 
-## 常见问题
+## FAQ
 
-### Q: 为什么有些搜索引擎返回结果为空？
+### Q: Why do some search engines return empty results?
 
-A: 可能原因：
+A: Possible reasons:
 
-- 搜索引擎 API 临时不可用或响应超时
-- 搜索关键词没有相关结果
-- 搜索引擎限制了访问频率
-- Google 需要配置 API Key 才能使用
+- Search engine API is temporarily unavailable or timed out
+- No relevant results for the search keyword
+- Search engine has rate-limited access
+- Google requires API Key configuration before use
 
-可以查看返回的 `unresponsive_engines` 字段了解哪些引擎没有响应。
+You can check the `unresponsive_engines` field in the response to see which engines did not respond.
 
-### Q: 如何提高搜索速度？
+### Q: How can I improve search speed?
 
-A: 建议：
+A: Recommendations:
 
-- 减少启用的搜索引擎数量，只使用需要的引擎
-- 适当调整超时时间（`DEFAULT_TIMEOUT`）
+- Reduce the number of enabled search engines and only use the engines you need
+- Adjust timeout (`DEFAULT_TIMEOUT`) appropriately
 
-### Q: Bing 搜索为什么默认禁用？
+### Q: Why is Bing search disabled by default?
 
-A: Bing 搜索结果目前不够稳定，出现内容与搜索关联度低的情况。如需使用，可以在请求时手动指定：`engines=bing` 或修改 `envs.js` 中的 `DEFAULT_ENGINES`。
+A: Bing search results are currently not stable enough, and may return content with low relevance to the query. If needed, you can manually specify `engines=bing` in requests or modify `DEFAULT_ENGINES` in `envs.js`.
 
-### Q: 如何保护服务不被滥用？
+### Q: How can I protect the service from abuse?
 
-A: 建议配置 `TOKEN` 环境变量启用鉴权：
+A: It is recommended to configure the `TOKEN` environment variable to enable authentication:
 
-1. 在 `wrangler.toml` 中设置 `TOKEN = "your-random-token"`
-2. 或在 Cloudflare Dashboard 的 Environment Variables 中添加
-3. 配置后所有请求都需要提供有效的 token
+1. Set `TOKEN = "your-random-token"` in `wrangler.toml`
+2. Or add it in Environment Variables in Cloudflare Dashboard
+3. After configuration, all requests must provide a valid token
 
-鉴权失败会返回 401 错误
+Authentication failure returns a 401 error.
 
-## 免责声明
+## Disclaimer
 
-本项目仅供学习和研究使用，使用者需遵守以下规定：
+This project is for learning and research purposes only. Users must comply with the following:
 
-1. **合法使用** - 仅用于合法搜索需求，不得用于违法或侵权用途
-2. **服务条款** - 使用时需遵守 Cloudflare Workers 和各搜索引擎的服务条款
-3. **API 限制** - 遵守各搜索引擎 API 的使用限制和配额
-4. **责任自负** - 使用本服务产生的任何后果由使用者自行承担
-5. **商业用途** - 如需商业使用，请确保符合相关法律法规和服务条款
+1. **Lawful Use** - Only use for legal search purposes. Do not use for illegal or infringing activities
+2. **Terms of Service** - Comply with the terms of Cloudflare Workers and each search engine
+3. **API Limits** - Follow usage limits and quotas of each search engine API
+4. **Use at Your Own Risk** - Any consequences from using this service are the user's responsibility
+5. **Commercial Use** - For commercial use, ensure compliance with relevant laws, regulations, and service terms
 
-## 贡献
+## Contributing
 
-欢迎提交 Issue 和 Pull Request！
+Issues and Pull Requests are welcome!
 
-## 许可证
+## License
 
 [GPL-3 License](LICENSE)
 
-## 相关链接
+## Related Links
 
-- [项目 GitHub](https://github.com/Yrobot/cloudflare-search)
-- [Cloudflare Workers 文档](https://developers.cloudflare.com/workers/)
+- [Project GitHub](https://github.com/Yrobot/cloudflare-search)
+- [Cloudflare Workers Docs](https://developers.cloudflare.com/workers/)
 - [Google Custom Search API](https://developers.google.com/custom-search/v1/overview)
 
-## 支持一下
+## Support the Project
 
-如果这个项目对你有帮助，可以请作者喝杯咖啡 ☕
+If this project helps you, you can buy the author a coffee ☕
 
 <image src="https://yrobot.top/donate_wx.jpeg" width="300"/>

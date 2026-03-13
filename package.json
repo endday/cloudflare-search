@@ -1,6 +1,6 @@
 {
   "name": "@yrobot/cf-search-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP server for Cloudflare Search API - Aggregated search across multiple engines",
   "type": "module",
   "publishConfig": {
@@ -16,8 +16,15 @@
   "keywords": [
     "mcp",
     "search",
+    "web-search",
     "cloudflare",
-    "api",
+    "cloudflare-workers",
+    "self-hosted",
+    "ai-agent",
+    "openclaw",
+    "free-search",
+    "privacy",
+    "aggregated-search",
     "google",
     "brave",
     "duckduckgo",
