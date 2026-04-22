@@ -11,7 +11,8 @@
     "cf-search-mcp": "./mcp/cf-search-mcp.js"
   },
   "scripts": {
-    "start": "node mcp/cf-search-mcp.js"
+    "start": "node mcp/cf-search-mcp.js",
+    "test": "node --test"
   },
   "keywords": [
     "mcp",
@@ -25,7 +26,8 @@
     "free-search",
     "privacy",
     "aggregated-search",
-    "google",
+    "startpage",
+    "mojeek",
     "brave",
     "duckduckgo",
     "bing"
@@ -37,7 +39,8 @@
     "url": "https://github.com/Yrobot/cloudflare-search.git"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.4"
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "node-html-parser": "^7.1.0"
   },
   "engines": {
     "node": ">=18.0.0"

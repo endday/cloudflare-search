@@ -5,7 +5,6 @@ import { env } from "../envs.js";
 // ============================================
 
 export function getSearchHtml() {
-  const GOOGLE_ENABLED = env.GOOGLE_API_KEY && env.GOOGLE_CX;
   const TOKEN_ENABLED = !!env.TOKEN;
   const DEFAULT_ENGINES = env.DEFAULT_ENGINES || [];
   const handlerEngineDefaultChecked = (engine) =>
@@ -94,7 +93,7 @@ export function getSearchHtml() {
                   </h1>
                   <div class="mt-6 text-base text-zinc-600 dark:text-zinc-400">
                     <p class="">
-                      基于 Cloudflare Workers 的多引擎聚合搜索服务。并行搜索 Google、DuckDuckGo、Bing、Brave 四大引擎,快速获取更全面的搜索结果。
+                      基于 Cloudflare Workers 的生产级搜索网关。优先使用 Bing 主引擎，结果不足或失败时按 Startpage、Mojeek、DuckDuckGo、Brave 顺序兜底。
                     </p>
                     <p class="mt-2">
                       如果这个项目对你有帮助，可以 
@@ -112,30 +111,14 @@ export function getSearchHtml() {
 
                 <!-- 服务状态 -->
                 <div class="mt-8 rounded-2xl border ${
-                  GOOGLE_ENABLED && !TOKEN_ENABLED
+                  TOKEN_ENABLED
                     ? "border-green-200 bg-green-50 dark:border-green-800/40 dark:bg-green-900/10"
-                    : !GOOGLE_ENABLED || TOKEN_ENABLED
-                    ? "border-amber-200 bg-amber-50 dark:border-amber-800/40 dark:bg-amber-900/10"
-                    : "border-zinc-100 dark:border-zinc-700/40"
+                    : "border-amber-200 bg-amber-50 dark:border-amber-800/40 dark:bg-amber-900/10"
                 } p-6">
                   <h2 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-3">
                     ⚙️ 服务配置状态
                   </h2>
                   <div class="space-y-2 text-sm">
-                    <div class="flex items-center justify-between">
-                      <span class="text-zinc-700 dark:text-zinc-300">Google 搜索引擎</span>
-                      <span class="${
-                        GOOGLE_ENABLED
-                          ? "text-green-600 dark:text-green-400"
-                          : "text-amber-600 dark:text-amber-400"
-                      }">
-                        ${
-                          GOOGLE_ENABLED
-                            ? "✓ 已配置"
-                            : "○ 未配置 (需要 API Key)"
-                        }
-                      </span>
-                    </div>
                     <div class="flex items-center justify-between">
                       <span class="text-zinc-700 dark:text-zinc-300">访问鉴权</span>
                       <span class="${
@@ -147,40 +130,17 @@ export function getSearchHtml() {
                       </span>
                     </div>
                     <div class="flex items-center justify-between">
-                      <span class="text-zinc-700 dark:text-zinc-300">其他引擎 (Brave/DuckDuckGo/Bing)</span>
+                      <span class="text-zinc-700 dark:text-zinc-300">无 Key 引擎 (Bing/Startpage/Mojeek/DuckDuckGo/Brave)</span>
                       <span class="text-green-600 dark:text-green-400">✓ 可用</span>
                     </div>
                   </div>
                   ${
-                    !GOOGLE_ENABLED
+                    !TOKEN_ENABLED
                       ? `
                   <div class="mt-4 pt-4 border-t border-amber-200 dark:border-amber-800/40">
                     <p class="text-xs text-amber-700 dark:text-amber-400">
-                      💡 提示: 配置 Google API 后可使用 Google 搜索引擎。在 Cloudflare Dashboard 的 Worker 设置中添加环境变量:<br/>
-                      • <code class="px-1 py-0.5 bg-amber-100 dark:bg-amber-900/30 rounded">GOOGLE_API_KEY</code> - <a href="https://console.cloud.google.com/apis/credentials" target="_blank" class="underline hover:text-amber-900 dark:hover:text-amber-100">获取 API Key</a><br/>
-                      • <code class="px-1 py-0.5 bg-amber-100 dark:bg-amber-900/30 rounded">GOOGLE_CX</code> - <a href="https://programmablesearchengine.google.com/" target="_blank" class="underline hover:text-amber-900 dark:hover:text-amber-100">获取 CX ID</a>
-                    </p>
-                  </div>
-                  `
-                      : ""
-                  }
-                  ${
-                    !TOKEN_ENABLED
-                      ? `
-                  <div class="mt-4 pt-4 border-t ${
-                    !GOOGLE_ENABLED
-                      ? "border-amber-200 dark:border-amber-800/40"
-                      : "border-green-200 dark:border-green-800/40"
-                  }">
-                    <p class="text-xs ${
-                      !GOOGLE_ENABLED
-                        ? "text-amber-700 dark:text-amber-400"
-                        : "text-green-700 dark:text-green-400"
-                    }">
                       💡 建议:为防止服务被滥用,建议在 Cloudflare Dashboard 的 Worker 设置中添加环境变量 <code class="px-1 py-0.5 ${
-                        !GOOGLE_ENABLED
-                          ? "bg-amber-100 dark:bg-amber-900/30"
-                          : "bg-green-100 dark:bg-green-900/30"
+                        "bg-amber-100 dark:bg-amber-900/30"
                       } rounded">TOKEN</code> 启用访问鉴权。
                     </p>
                   </div>
@@ -213,43 +173,29 @@ export function getSearchHtml() {
                         选择搜索引擎 (可多选)
                       </label>
                       <div class="grid grid-cols-2 gap-2">
-                        <label class="flex items-center space-x-2 ${
-                          GOOGLE_ENABLED
-                            ? "cursor-pointer"
-                            : "cursor-not-allowed opacity-50"
-                        }" ${
-    !GOOGLE_ENABLED ? 'title="Google 引擎需要配置 API Key"' : ""
-  }>
-                          <input type="checkbox" name="engine" value="google" ${
-                            GOOGLE_ENABLED
-                              ? handlerEngineDefaultChecked("google")
-                              : "disabled"
-                          } class="rounded text-blue-500 focus:ring-blue-500 ${
-    !GOOGLE_ENABLED ? "cursor-not-allowed" : ""
-  }">
-                          <span class="text-sm text-zinc-700 dark:text-zinc-300">
-                            Google
-                            ${
-                              !GOOGLE_ENABLED
-                                ? '<span class="text-xs text-zinc-400 dark:text-zinc-500 ml-1">(未配置)</span>'
-                                : ""
-                            }
-                          </span>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                          <input type="checkbox" name="engine" value="bing" ${handlerEngineDefaultChecked(
+                            "bing"
+                          )} class="rounded text-blue-500 focus:ring-blue-500">
+                          <span class="text-sm text-zinc-700 dark:text-zinc-300">Bing</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                          <input type="checkbox" name="engine" value="startpage" ${handlerEngineDefaultChecked(
+                            "startpage"
+                          )} class="rounded text-blue-500 focus:ring-blue-500">
+                          <span class="text-sm text-zinc-700 dark:text-zinc-300">Startpage</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                          <input type="checkbox" name="engine" value="mojeek" ${handlerEngineDefaultChecked(
+                            "mojeek"
+                          )} class="rounded text-blue-500 focus:ring-blue-500">
+                          <span class="text-sm text-zinc-700 dark:text-zinc-300">Mojeek</span>
                         </label>
                         <label class="flex items-center space-x-2 cursor-pointer">
                           <input type="checkbox" name="engine" value="duckduckgo" ${handlerEngineDefaultChecked(
                             "duckduckgo"
                           )} class="rounded text-blue-500 focus:ring-blue-500">
                           <span class="text-sm text-zinc-700 dark:text-zinc-300">DuckDuckGo</span>
-                        </label>
-                        <label class="flex items-center space-x-2 cursor-pointer" title="结果质量不稳定，不建议开启">
-                          <input type="checkbox" name="engine" value="bing" ${handlerEngineDefaultChecked(
-                            "bing"
-                          )} class="rounded text-blue-500 focus:ring-blue-500">
-                          <span class="text-sm text-zinc-700 dark:text-zinc-300">
-                            Bing
-                            <span class="text-xs text-zinc-400 dark:text-zinc-500 ml-1">(不稳定)</span>
-                          </span>
                         </label>
                         <label class="flex items-center space-x-2 cursor-pointer">
                           <input type="checkbox" name="engine" value="brave" ${handlerEngineDefaultChecked(
@@ -328,6 +274,9 @@ export function getSearchHtml() {
                       <ul class="list-disc list-inside space-y-0.5 ml-2">
                         <li><code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">q</code> / <code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">query</code> - 搜索关键词 (必填)</li>
                         <li><code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">engines</code> - 指定搜索引擎,多个用逗号分隔 (可选)</li>
+                        <li><code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">language</code> - 语言/区域，如 <code>en</code>、<code>zh-CN</code> (可选)</li>
+                        <li><code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">time_range</code> - <code>day</code>、<code>week</code>、<code>month</code>、<code>year</code> (可选)</li>
+                        <li><code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">pageno</code> - 从 0 开始的页码 (可选)</li>
                         ${
                           TOKEN_ENABLED
                             ? '<li><code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">token</code> - 访问令牌 (必填)</li>'
@@ -343,14 +292,14 @@ export function getSearchHtml() {
                         <pre class="text-xs overflow-x-auto"><code>{
   "query": "cloudflare",              // 搜索关键词
   "number_of_results": 15,            // 结果总数
-  "enabled_engines": ["google", ...], // 启用的搜索引擎列表
+  "enabled_engines": ["bing", ...],   // 启用的搜索引擎列表
   "unresponsive_engines": [],         // 无响应的搜索引擎列表
   "results": [
     {
       "title": "...",                 // 结果标题
       "description": "...",           // 结果描述
       "url": "...",                   // 结果链接
-      "engine": "google"              // 来源引擎
+      "engine": "bing"                // 来源引擎
     }
   ]
 }</code></pre>
@@ -365,41 +314,40 @@ export function getSearchHtml() {
                     🚀 支持的搜索引擎
                   </h2>
                   <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div class="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-800/50 ${
-                      !GOOGLE_ENABLED ? "opacity-50" : ""
-                    }">
+                    <div class="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-800/50">
                       <div class="flex items-center justify-between mb-2">
-                        <div class="font-medium text-zinc-900 dark:text-zinc-100">Google</div>
-                        ${
-                          GOOGLE_ENABLED
-                            ? '<span class="text-xs text-green-600 dark:text-green-400">✓ 可用</span>'
-                            : '<span class="text-xs text-amber-600 dark:text-amber-400">○ 需配置</span>'
-                        }
+                        <div class="font-medium text-zinc-900 dark:text-zinc-100">Bing</div>
+                        <span class="text-xs text-green-600 dark:text-green-400">主引擎</span>
                       </div>
-                      <p class="text-xs text-zinc-600 dark:text-zinc-400">
-                        全球最大的搜索引擎,需要配置 Google Custom Search API
-                      </p>
+                      <p class="text-xs text-zinc-600 dark:text-zinc-400">优先抓取 Bing HTML，失败或结果不足时进入 fallback 链路</p>
+                    </div>
+                    <div class="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-800/50">
+                      <div class="flex items-center justify-between mb-2">
+                        <div class="font-medium text-zinc-900 dark:text-zinc-100">Startpage</div>
+                        <span class="text-xs text-green-600 dark:text-green-400">高优先级</span>
+                      </div>
+                      <p class="text-xs text-zinc-600 dark:text-zinc-400">无 Key 搜索补充，适合作为 Workers fallback 引擎</p>
+                    </div>
+                    <div class="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-800/50">
+                      <div class="flex items-center justify-between mb-2">
+                        <div class="font-medium text-zinc-900 dark:text-zinc-100">Mojeek</div>
+                        <span class="text-xs text-green-600 dark:text-green-400">高优先级</span>
+                      </div>
+                      <p class="text-xs text-zinc-600 dark:text-zinc-400">页面结构简单，作为独立索引补充来源</p>
                     </div>
                     <div class="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-800/50">
                       <div class="flex items-center justify-between mb-2">
                         <div class="font-medium text-zinc-900 dark:text-zinc-100">DuckDuckGo</div>
-                        <span class="text-xs text-green-600 dark:text-green-400">✓ 可用</span>
+                        <span class="text-xs text-green-600 dark:text-green-400">fallback</span>
                       </div>
                       <p class="text-xs text-zinc-600 dark:text-zinc-400">注重隐私保护的搜索引擎,无需配置</p>
                     </div>
                     <div class="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-800/50">
                       <div class="flex items-center justify-between mb-2">
                         <div class="font-medium text-zinc-900 dark:text-zinc-100">Brave Search</div>
-                        <span class="text-xs text-green-600 dark:text-green-400">✓ 可用</span>
+                        <span class="text-xs text-green-600 dark:text-green-400">fallback</span>
                       </div>
-                      <p class="text-xs text-zinc-600 dark:text-zinc-400">独立的搜索引擎,无需配置</p>
-                    </div>
-                    <div class="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-800/50 opacity-60">
-                      <div class="flex items-center justify-between mb-2">
-                        <div class="font-medium text-zinc-900 dark:text-zinc-100">Bing</div>
-                        <span class="text-xs text-amber-600 dark:text-amber-400">⚠ 不稳定</span>
-                      </div>
-                      <p class="text-xs text-zinc-600 dark:text-zinc-400">微软的搜索引擎,目前结果质量不稳定,默认未启用</p>
+                      <p class="text-xs text-zinc-600 dark:text-zinc-400">独立的搜索引擎，直接解析 HTML，已移除 eval</p>
                     </div>
                   </div>
                 </div>
@@ -425,11 +373,6 @@ export function getSearchHtml() {
                           在 Cloudflare Dashboard → Workers & Pages → 您的 Worker → 设置 → 变量 中添加:
                         </p>
                         <ul class="text-xs text-blue-700 dark:text-blue-300 mt-1 ml-4 list-disc">
-                          ${
-                            !GOOGLE_ENABLED
-                              ? '<li><code class="px-1 py-0.5 bg-blue-100 dark:bg-blue-900/30 rounded">GOOGLE_API_KEY</code> 和 <code class="px-1 py-0.5 bg-blue-100 dark:bg-blue-900/30 rounded">GOOGLE_CX</code> - 启用 Google 搜索 (<a href="https://console.cloud.google.com/apis/credentials" target="_blank" class="underline hover:text-blue-900 dark:hover:text-blue-100">获取 API Key</a> / <a href="https://programmablesearchengine.google.com/" target="_blank" class="underline hover:text-blue-900 dark:hover:text-blue-100">获取 CX</a>)</li>'
-                              : ""
-                          }
                           ${
                             !TOKEN_ENABLED
                               ? '<li><code class="px-1 py-0.5 bg-blue-100 dark:bg-blue-900/30 rounded">TOKEN</code> - 启用访问鉴权 (建议)</li>'
@@ -613,7 +556,7 @@ export function getSearchHtml() {
     const tokenBodyParam = TOKEN_ENABLED && currentToken ? \`&token=\${currentToken}\` : '';
 
     document.getElementById('apiExample1').textContent = currentOrigin + '/search?q=cloudflare' + tokenParam;
-    document.getElementById('apiExample2').textContent = 'curl -X POST "' + currentOrigin + '/search" -d "q=cloudflare&engines=google,brave' + tokenBodyParam + '"';
+    document.getElementById('apiExample2').textContent = 'curl -X POST "' + currentOrigin + '/search" -d "q=cloudflare&engines=bing,startpage' + tokenBodyParam + '"';
     document.getElementById('mcp-config-json').innerHTML = \`{
   "mcpServers": {
     "cloudflare-search": {

@@ -10,11 +10,15 @@
 
 ## 特性
 
-- 🔍 **多引擎聚合** - 同时使用多个搜索引擎（Google、Brave、DuckDuckGo、Bing）
+- 🔍 **优先级搜索网关** - 默认先用 Bing，再按 Startpage、Mojeek、DuckDuckGo、Brave 顺序 fallback
 - 🤖 **AI 增强 (MCP)** - 原生支持 Model Context Protocol，一键为 **OpenClaw** / **Claude Code** / **Codex** 添加搜索工具
-- ⚡ **并行搜索** - 所有搜索引擎同时请求，快速返回结果
-- 🛡️ **容错机制** - 单个引擎失败不影响其他引擎，自动标记无响应引擎
+- ⚡ **智能 fallback** - 达到足够的去重结果后提前停止，不再固定全并行
+- 🛡️ **容错机制** - 分类处理超时、解析失败、上游异常，并对不健康引擎做冷却
+- 🧹 **去重与排序** - URL 归一化、跨引擎去重、按引擎优先级和相关性排序
+- 💾 **KV 缓存** - 支持新鲜缓存和 `stale-if-error` 兜底缓存
+- 🚦 **简单限流** - 基于 token / IP 的固定窗口限流，可绑定 KV 跨 isolate 共享状态
 - ⏱️ **超时控制** - 可配置请求超时时间，避免长时间等待
+- 🪂 **Hedged Fallback** - 主引擎过慢时提前触发 fallback，降低尾延迟
 - 🔒 **Token 鉴权** - 支持 Token 认证，保护服务不被滥用
 - 🌍 **CORS 支持** - 完整的跨域资源共享支持
 - 🎨 **Web 界面** - 提供简洁的搜索界面，方便测试
@@ -59,6 +63,15 @@
   }
 }
 ```
+
+#### 观测响应头
+
+- `X-Search-Request-Id`：请求唯一 ID，方便日志排查
+- `X-Search-Cache`：`miss` / `hit` / `revalidated` / `stale-if-error`
+- `X-Search-Fallback-Order`：本次请求的引擎优先级
+- `X-Search-Fallback-Path`：本次实际触发过的引擎路径
+- `X-Search-Duration-Ms`：网关总耗时
+- `Server-Timing`：各引擎耗时
 
 **环境变量说明**：
 
@@ -134,7 +147,7 @@ https://$YOUR-DOMAIN/
 curl "https://$YOUR-DOMAIN/search?q=cloudflare"
 
 # 指定搜索引擎
-curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=google,brave"
+curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=bing,startpage"
 
 # 使用 token 鉴权（如果配置了 TOKEN 环境变量）
 curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
@@ -147,7 +160,7 @@ curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
 ```bash
 curl -X POST "https://$YOUR-DOMAIN/search" \
   -d "q=cloudflare" \
-  -d "engines=google,brave"
+  -d "engines=bing,startpage" \
   -d "token=$YOUR-TOKEN" # 如果配置了 TOKEN 环境变量
 ```
 
@@ -162,15 +175,19 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 | 参数          | 类型     | 必填   | 说明                                      | 示例           |
 | ------------- | -------- | ------ | ----------------------------------------- | -------------- |
 | `q` / `query` | `string` | yes    | 搜索关键词                                | `cloudflare`   |
-| `engines`     | `string` | no     | 指定搜索引擎，多个用逗号分隔              | `google,brave` |
+| `engines`     | `string` | no     | 指定搜索引擎，多个用逗号分隔              | `bing,startpage` |
+| `language`    | `string` | no     | 语言/地区提示，传给支持的搜索引擎         | `en`、`zh-CN` |
+| `time_range`  | `string` | no     | 时间范围：`day`、`week`、`month`、`year` | `month` |
+| `pageno`      | `number` | no     | 从 0 开始的页码                           | `0` |
 | `token`       | `string` | no/yse | 访问令牌（当配置了 TOKEN 环境变量时必填） | `$YOUR-TOKEN`  |
 
 **支持的搜索引擎**：
 
-- `google` - Google 搜索（需要配置 API Key）
-- `brave` - Brave 搜索
-- `duckduckgo` - DuckDuckGo 搜索
 - `bing` - Bing 搜索
+- `startpage` - Startpage 搜索
+- `mojeek` - Mojeek 搜索
+- `duckduckgo` - DuckDuckGo 搜索
+- `brave` - Brave 搜索
 
 #### 返回值
 
@@ -193,12 +210,17 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 
 ```bash
 # GET 请求
-curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=google,brave"
+curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=bing,startpage"
 
-# POST 请求
+# JSON POST 请求
+curl -X POST "https://$YOUR-DOMAIN/search" \
+  -H "Content-Type: application/json" \
+  -d '{"q":"cloudflare","engines":["bing","startpage"],"language":"zh-CN","time_range":"month"}'
+
+# 表单 POST 请求
 curl -X POST "https://$YOUR-DOMAIN/search" \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "q=cloudflare&engines=google,brave"
+  -d "q=cloudflare&engines=bing,startpage"
 ```
 
 #### 响应示例
@@ -207,20 +229,20 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 {
   "query": "cloudflare",
   "number_of_results": 15,
-  "enabled_engines": ["google", "brave", "duckduckgo"],
+  "enabled_engines": ["bing", "startpage", "mojeek", "duckduckgo", "brave"],
   "unresponsive_engines": [],
   "results": [
     {
       "title": "Cloudflare - The Web Performance & Security Company",
       "description": "Cloudflare is on a mission to help build a better Internet...",
       "url": "https://www.cloudflare.com/",
-      "engine": "google"
+      "engine": "bing"
     },
     {
       "title": "Cloudflare Workers",
       "description": "Deploy serverless code instantly across the globe...",
       "url": "https://workers.cloudflare.com/",
-      "engine": "brave"
+      "engine": "startpage"
     }
   ]
 }
@@ -230,19 +252,22 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 
 ### 支持的搜索引擎
 
-| 引擎           | 说明                     | 是否需要配置                  | 默认启用        |
-| -------------- | ------------------------ | ----------------------------- | --------------- |
-| **Google**     | Google Custom Search API | 需要 GOOGLE_API_KEY GOOGLE_CX | yes             |
-| **Brave**      | Brave Search API         | -                             | yes             |
-| **DuckDuckGo** | DuckDuckGo 即时答案 API  | -                             | yes             |
-| **Bing**       | Bing 搜索                | -                             | no (结果不稳定) |
+| 引擎           | 说明                           | 是否需要配置                  | 默认角色 |
+| -------------- | ------------------------------ | ----------------------------- | -------- |
+| **Bing**       | HTML 搜索解析                  | -                             | 主引擎   |
+| **Startpage**  | 序列化 SERP 结果               | -                             | fallback 1 |
+| **Mojeek**     | 简单 HTML 解析                 | -                             | fallback 2 |
+| **DuckDuckGo** | HTML 搜索接口                  | -                             | fallback 3 |
+| **Brave**      | HTML 结果解析（已去掉 `eval`） | -                             | fallback 4 |
 
 ### 基本工作方案
 
-1. **并行请求**：所有启用的搜索引擎同时发起请求，提高响应速度
-2. **超时控制**：单个引擎超时不影响其他引擎，默认 3 秒超时
-3. **结果聚合**：将所有成功返回的结果合并，标记来源引擎
-4. **容错处理**：记录无响应的引擎，返回部分结果而不是完全失败
+1. **优先级 fallback**：默认按 `bing,startpage,mojeek,duckduckgo,brave` 顺序执行
+2. **提前停止**：当去重后的结果达到 `FALLBACK_MIN_RESULTS` 且至少 `FALLBACK_MIN_CONTRIBUTING_ENGINES` 个引擎贡献结果后停止继续请求
+3. **结果归一化**：统一标题、描述、URL，并做去重与简单排序
+4. **健康度控制**：连续失败的引擎会临时进入冷却；绑定 `SEARCH_STATE_KV` 后可跨 isolate 共享
+5. **KV 缓存**：若绑定 `SEARCH_KV`，会缓存最终 `/search` 响应，并支持 stale-if-error 回退
+6. **Hedged Fallback**：主链路超过 `HEDGED_FALLBACK_DELAY_MS` 仍未返回时，会提前启动下一个 fallback
 
 ## 环境变量配置
 
@@ -250,15 +275,25 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 
 | 变量名            | 类型     | 默认值   | 说明                                              |
 | ----------------- | -------- | -------- | ------------------------------------------------- |
-| `DEFAULT_TIMEOUT` | `string` | `"3000"` | 单个搜索引擎的超时时间（毫秒）                    |
-| `GOOGLE_API_KEY`  | `string` | `null`   | https://console.cloud.google.com/apis/credentials |
-| `GOOGLE_CX`       | `string` | `null`   | https://programmablesearchengine.google.com/      |
+| `DEFAULT_ENGINES` | `string`/`array` | `bing,startpage,mojeek,duckduckgo,brave` | 引擎优先级 / fallback 顺序 |
+| `DEFAULT_TIMEOUT` | `string` | `"4000"` | 单个搜索引擎的超时时间（毫秒）                    |
+| `HEDGED_FALLBACK_DELAY_MS` | `string` | `"400"` | 主引擎慢于该阈值时提前触发 fallback（毫秒） |
+| `FALLBACK_MIN_RESULTS` | `string` | `"6"` | 达到该去重结果数后停止 fallback                   |
+| `FALLBACK_MIN_CONTRIBUTING_ENGINES` | `string` | `"2"` | 提前停止前至少需要贡献结果的引擎数 |
+| `CACHE_TTL_SECONDS` | `string` | `"300"` | KV 缓存 TTL；设为 `0` 可关闭缓存                  |
+| `STALE_CACHE_TTL_SECONDS` | `string` | `"1800"` | 过期缓存可在错误时兜底返回的保留时间（秒）     |
+| `RATE_LIMIT_WINDOW_SECONDS` | `string` | `"60"` | 限流窗口大小（秒）                            |
+| `RATE_LIMIT_MAX_REQUESTS` | `string` | `"60"` | 每个 token / IP 在窗口内允许的请求数            |
+| `HEALTH_FAILURE_THRESHOLD` | `string` | `"2"` | 引擎进入冷却前允许的连续失败次数                |
+| `HEALTH_COOLDOWN_SECONDS` | `string` | `"180"` | 引擎冷却时间（秒）                            |
+| `HEALTH_STATE_TTL_SECONDS` | `string` | `"3600"` | 引擎健康状态在 KV 中的保留时间（秒）          |
 | `TOKEN`           | `string` | `null`   | 访问令牌，配置后启用鉴权，保护服务不被滥用        |
 
 **注意**：
 
-- Google Custom Search API 免费版每天限制 100 次请求
 - `TOKEN` 配置后，所有请求都需要提供有效的 token
+- 绑定 `SEARCH_STATE_KV` 后，限流计数和引擎健康度会跨 isolate 共享；KV 写入是最终一致，不是强原子限流
+- 绑定 `SEARCH_KV` 后即可启用跨请求缓存；若实时请求失败且 stale 缓存仍在有效期，会返回 stale 结果
 
 ### 配置方式
 
@@ -268,10 +303,23 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 
 ```toml
 [vars]
-GOOGLE_API_KEY = "your-google-api-key"
-GOOGLE_CX = "your-google-custom-search-cx"
-DEFAULT_TIMEOUT = "3000"
+DEFAULT_ENGINES = "bing,startpage,mojeek,duckduckgo,brave"
+DEFAULT_TIMEOUT = "4000"
+HEDGED_FALLBACK_DELAY_MS = "400"
+FALLBACK_MIN_CONTRIBUTING_ENGINES = "2"
+CACHE_TTL_SECONDS = "300"
+STALE_CACHE_TTL_SECONDS = "1800"
+RATE_LIMIT_MAX_REQUESTS = "60"
+HEALTH_STATE_TTL_SECONDS = "3600"
 TOKEN = "your-secret-token-here"
+
+[[kv_namespaces]]
+binding = "SEARCH_KV"
+id = "your-kv-namespace-id"
+
+[[kv_namespaces]]
+binding = "SEARCH_STATE_KV"
+id = "your-state-kv-namespace-id"
 ```
 
 #### 方式 2: Cloudflare Dashboard
@@ -288,7 +336,7 @@ TOKEN = "your-secret-token-here"
 
 ```javascript
 const response = await fetch(
-  "https://$YOUR-DOMAIN/search?q=javascript&engines=google,brave",
+  "https://$YOUR-DOMAIN/search?q=javascript&engines=bing,startpage",
 );
 const data = await response.json();
 console.log(`找到 ${data.number_of_results} 个结果`);
@@ -313,7 +361,7 @@ async function search(query) {
 收集多个搜索引擎的结果进行对比分析：
 
 ```javascript
-const engines = ["google", "brave", "duckduckgo"];
+const engines = ["bing", "startpage", "duckduckgo"];
 const results = await fetch(
   `https://$YOUR-DOMAIN/search?q=AI&engines=${engines.join(",")}`,
 );
@@ -341,12 +389,12 @@ const byEngine = data.results.reduce((acc, result) => {
    - 在 Worker 设置中点击 **Triggers** > **Add Custom Domain** 添加自定义域名
 
 2. **搜索引擎限制**
-   - Google API 免费版每天限制 100 次请求
-   - 其他搜索引擎一般没有严格限制，但请合理使用
+   - HTML 抓取引擎页面结构可能变化，建议保留 parser fixture 测试
+   - 搜索引擎一般没有严格公开配额，但请合理使用
    - 频繁请求可能导致被临时限制访问
 
 3. **超时设置**
-   - 默认单个引擎超时 3 秒
+   - 默认单个引擎超时 4 秒
    - 可通过环境变量 `DEFAULT_TIMEOUT` 调整
    - 建议不要设置过长，避免整体响应时间过长
 
@@ -382,7 +430,6 @@ A: 可能原因：
 - 搜索引擎 API 临时不可用或响应超时
 - 搜索关键词没有相关结果
 - 搜索引擎限制了访问频率
-- Google 需要配置 API Key 才能使用
 
 可以查看返回的 `unresponsive_engines` 字段了解哪些引擎没有响应。
 
@@ -390,12 +437,25 @@ A: 可能原因：
 
 A: 建议：
 
-- 减少启用的搜索引擎数量，只使用需要的引擎
-- 适当调整超时时间（`DEFAULT_TIMEOUT`）
+- 保持默认 fallback 链路，让网关在拿到足够结果后提前停止
+- 绑定 `SEARCH_KV` 并合理设置 `CACHE_TTL_SECONDS`
+- 配合 `STALE_CACHE_TTL_SECONDS` 提升上游失败时的可用性
+- 绑定 `SEARCH_STATE_KV`，让限流和引擎健康度跨 isolate 共享
+- 结合 `DEFAULT_TIMEOUT`、`HEDGED_FALLBACK_DELAY_MS`、`FALLBACK_MIN_RESULTS` 和 `FALLBACK_MIN_CONTRIBUTING_ENGINES` 做调优
 
-### Q: Bing 搜索为什么默认禁用？
+### Q: fallback 是怎么工作的？
 
-A: Bing 搜索结果目前不够稳定，出现内容与搜索关联度低的情况。如需使用，可以在请求时手动指定：`engines=bing` 或修改 `envs.js` 中的 `DEFAULT_ENGINES`。
+A: 默认顺序如下：
+
+1. `bing`
+2. `startpage`
+3. `mojeek`
+4. `duckduckgo`
+5. `brave`
+
+当去重后的结果数达到 `FALLBACK_MIN_RESULTS` 且至少 `FALLBACK_MIN_CONTRIBUTING_ENGINES` 个引擎贡献结果后，网关会停止继续请求。
+
+如果主引擎超过 `HEDGED_FALLBACK_DELAY_MS` 仍未返回，网关会提前启动下一个 fallback，以降低尾延迟。
 
 ### Q: 如何保护服务不被滥用？
 
@@ -406,6 +466,10 @@ A: 建议配置 `TOKEN` 环境变量启用鉴权：
 3. 配置后所有请求都需要提供有效的 token
 
 鉴权失败会返回 401 错误
+
+### Q: 限流是不是全局强一致？
+
+A: 绑定 `SEARCH_STATE_KV` 后，限流计数会跨 isolate 共享，适合基础防滥用。但 Cloudflare KV 写入是最终一致，不是严格原子计数；如果你需要强一致全局限流，建议后续接入 Durable Objects。
 
 ## 免责声明
 
@@ -429,7 +493,6 @@ A: 建议配置 `TOKEN` 环境变量启用鉴权：
 
 - [项目 GitHub](https://github.com/Yrobot/cloudflare-search)
 - [Cloudflare Workers 文档](https://developers.cloudflare.com/workers/)
-- [Google Custom Search API](https://developers.google.com/custom-search/v1/overview)
 
 ## 支持一下
 

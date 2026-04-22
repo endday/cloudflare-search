@@ -33,12 +33,24 @@ if (!CF_SEARCH_URL) {
 /**
  * Call the Cloudflare Search API
  */
-async function searchAPI(query, engines = null) {
+async function searchAPI(query, engines = null, options = {}) {
   try {
     const params = new URLSearchParams({ q: query });
 
     if (engines && engines.length > 0) {
       params.append("engines", engines.join(","));
+    }
+
+    if (options.language) {
+      params.append("language", options.language);
+    }
+
+    if (options.time_range) {
+      params.append("time_range", options.time_range);
+    }
+
+    if (Number.isInteger(options.pageno)) {
+      params.append("pageno", String(options.pageno));
     }
 
     if (CF_SEARCH_TOKEN) {
@@ -86,11 +98,31 @@ const SEARCH_INPUT_SCHEMA = {
       type: "array",
       items: {
         type: "string",
-        enum: ["google", "brave", "duckduckgo", "bing"],
+        enum: [
+          "bing",
+          "startpage",
+          "mojeek",
+          "duckduckgo",
+          "brave",
+        ],
       },
       description:
         "Optional: Array of search engines to use. If not specified, uses default engines. " +
-        "Available engines: google, brave, duckduckgo, bing",
+        "Available engines: bing, startpage, mojeek, duckduckgo, brave",
+    },
+    language: {
+      type: "string",
+      description: "Optional language/region hint, for example en or zh-CN",
+    },
+    time_range: {
+      type: "string",
+      enum: ["day", "week", "month", "year"],
+      description: "Optional time range filter",
+    },
+    pageno: {
+      type: "integer",
+      minimum: 0,
+      description: "Optional zero-based page number",
     },
   },
   required: ["query"],
@@ -106,16 +138,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "web_search",
         description:
           "Search the web for current information, news, or any topic. " +
-          "Uses multiple engines (Brave, DuckDuckGo, Google, Bing) simultaneously " +
-          "and returns aggregated results with source URLs. " +
+          "Uses Bing first, then falls back to Startpage, Mojeek, DuckDuckGo, and Brave " +
+          "when results are insufficient. Returns deduplicated source URLs. " +
           "Use this when you need real-time information not in your training data. ",
         inputSchema: SEARCH_INPUT_SCHEMA,
       },
       {
         name: "search",
         description:
-          "Search across multiple search engines (Google, Brave, DuckDuckGo, Bing) and return aggregated results. " +
-          "This tool provides comprehensive search results from multiple sources, with source attribution for each result.",
+          "Search through the Cloudflare Workers search gateway and return deduplicated results. " +
+          "The gateway uses prioritized fallback with source attribution for each result.",
         inputSchema: SEARCH_INPUT_SCHEMA,
       },
     ],
@@ -137,14 +169,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     throw new Error("Missing arguments");
   }
 
-  const { query, engines } = request.params.arguments;
+  const { query, engines, language, time_range, pageno } =
+    request.params.arguments;
 
   if (!query || typeof query !== "string") {
     throw new Error("Query must be a non-empty string");
   }
 
   try {
-    const result = await searchAPI(query, engines);
+    const result = await searchAPI(query, engines, {
+      language,
+      time_range,
+      pageno,
+    });
 
     // Format the results for better readability
     const formattedResults = result.results

@@ -1,121 +1,9 @@
 import { env, setEnv } from "./envs.js";
+import { ApiError, normalizeError, toErrorPayload } from "./utils/errors.js";
 import { getSearchHtml } from "./utils/getHTML.js";
-import searchGoogle from "./utils/searchGoogle.js";
-import searchBrave from "./utils/searchBrave.js";
-import searchDuckDuckGo from "./utils/searchDuckDuckGo.js";
-import searchBing from "./utils/searchBing.js";
+import { enforceRateLimit } from "./utils/rateLimit.js";
+import { searchAllWithMeta } from "./utils/searchGateway.js";
 
-const SEARCH_ENGINES = {
-  google: searchGoogle,
-  brave: searchBrave,
-  duckduckgo: searchDuckDuckGo,
-  bing: searchBing,
-};
-
-/**
- * Parse engines parameter
- * @param {string|undefined} enginesParam - Comma-separated engine names
- * @returns {string[]} Array of valid engine names
- */
-function parseEngines(enginesParam) {
-  if (!enginesParam) return env.DEFAULT_ENGINES || env.SUPPORTED_ENGINES;
-
-  return enginesParam
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter((e) => {
-      // Filter out google if not enabled
-      if (e === "google" && !(env.GOOGLE_API_KEY && env.GOOGLE_CX))
-        return false;
-      return env.SUPPORTED_ENGINES.includes(e);
-    });
-}
-
-/**
- * Search with a single engine
- * @param {string} engineName - Engine name
- * @param {string} query - Search query
- * @returns {Promise<Array>} Search results
- */
-async function searchSingle(engineName, query) {
-  const searchFn = SEARCH_ENGINES[engineName];
-  if (!searchFn) {
-    console.warn(`Unknown engine: ${engineName}`);
-    return [];
-  }
-
-  // 创建 AbortController 用于取消请求
-  const controller = new AbortController();
-  const timeout = parseInt(env.DEFAULT_TIMEOUT ?? "3000", 10);
-
-  try {
-    // 设置超时自动取消
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-    const result = await searchFn({ query, signal: controller.signal });
-
-    clearTimeout(timeoutId);
-    return result;
-  } catch (error) {
-    if (error.name === "AbortError") {
-      console.error(`[${engineName}] Timeout after ${timeout}ms`);
-    } else {
-      console.error(`[${engineName}] Error:`, error.message);
-    }
-    return [];
-  }
-}
-
-/**
- * Search with all specified engines in parallel
- * @param {Object} params - Search parameters
- * @param {string} params.query - Search query
- * @param {string[]} [params.engines] - Array of engine names
- * @returns {Promise<Object>} Search response matching searchAll type
- */
-async function searchAll({ query, engines }) {
-  const enabledEngines = parseEngines(engines?.join(","));
-
-  console.log(`[searchAll] query="${query}", engines=[${enabledEngines}]`);
-
-  // Execute all searches in parallel
-  const resultsArr = await Promise.allSettled(
-    enabledEngines.map((engine) => searchSingle(engine, query))
-  );
-
-  // Collect resultsArr and track unresponsive engines
-  const results = [];
-  const unresponsive = [];
-
-  resultsArr.forEach((result, index) => {
-    const engineName = enabledEngines[index];
-    if (result.status === "fulfilled" && result.value.length > 0) {
-      results.push(
-        ...result.value.map((item) => ({
-          ...item,
-          engine: engineName,
-        }))
-      );
-    } else {
-      unresponsive.push(engineName);
-      if (result.status === "rejected") {
-        console.error(`[${engineName}] Rejected:`, result.reason);
-      }
-    }
-  });
-
-  return {
-    query,
-    number_of_results: results.length,
-    enabled_engines: enabledEngines,
-    unresponsive_engines: unresponsive,
-    results,
-  };
-}
-
-/**
- * CORS headers
- */
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -123,34 +11,191 @@ const CORS_HEADERS = {
   "Access-Control-Max-Age": "86400",
 };
 
-/**
- * Verify authentication token
- */
-function verifyToken(request, paramToken) {
-  // If TOKEN is not configured, skip authentication
+function jsonResponse(payload, status = 200, headers = {}) {
+  return new Response(JSON.stringify(payload, null, 2), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      ...CORS_HEADERS,
+      ...headers,
+    },
+  });
+}
+
+function getRequestId(request) {
+  return request.headers.get("cf-ray") || crypto.randomUUID();
+}
+
+function buildServerTimingHeader(engineTimings) {
+  return engineTimings
+    .map((timing) => `${timing.engine};dur=${timing.duration_ms}`)
+    .join(", ");
+}
+
+function buildSearchResponseHeaders({ requestId, durationMs, meta }) {
+  const headers = {
+    "X-Search-Request-Id": requestId,
+    "X-Search-Duration-Ms": String(durationMs),
+    "X-Search-Cache": meta.cache_status,
+    "X-Search-Fallback-Path": meta.fallback_path.join(","),
+  };
+
+  if (meta.fallback_order.length > 0) {
+    headers["X-Search-Fallback-Order"] = meta.fallback_order.join(",");
+  }
+
+  if (meta.engine_timings.length > 0) {
+    headers["Server-Timing"] = buildServerTimingHeader(meta.engine_timings);
+  }
+
+  return headers;
+}
+
+function getBearerToken(request) {
+  return request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
+}
+
+function getRequestToken(request, paramToken) {
+  return getBearerToken(request) || request.headers.get("x-api-key") || paramToken;
+}
+
+function isAuthorizedToken(requestToken) {
   if (!env.TOKEN) {
     return true;
   }
 
-  const token =
-    request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "") ||
-    paramToken;
-
-  return token === env.TOKEN;
+  return requestToken === env.TOKEN;
 }
 
-/**
- * Main request handler
- */
+function verifyToken(requestToken) {
+  return isAuthorizedToken(requestToken);
+}
+
+function getRateLimitToken(requestToken) {
+  if (!env.TOKEN) {
+    return null;
+  }
+
+  return isAuthorizedToken(requestToken) ? requestToken : null;
+}
+
+async function parsePostParams(request) {
+  const contentType = request.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    try {
+      const payload = await request.json();
+      return payload && typeof payload === "object" ? payload : {};
+    } catch (_) {
+      throw new ApiError({
+        status: 400,
+        code: "INVALID_JSON",
+        category: "validation",
+        message: "POST body must be valid JSON",
+      });
+    }
+  }
+
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    return Object.fromEntries(new URLSearchParams(await request.text()));
+  }
+
+  if (contentType.includes("multipart/form-data")) {
+    const formData = await request.formData();
+    return Object.fromEntries(formData.entries());
+  }
+
+  try {
+    const formData = await request.formData();
+    return Object.fromEntries(formData.entries());
+  } catch (_) {
+    return {};
+  }
+}
+
+async function parseRequestParams(request, url) {
+  if (request.method === "GET") {
+    return Object.fromEntries(url.searchParams.entries());
+  }
+
+  return parsePostParams(request);
+}
+
+function normalizeEngineParam(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    return value.split(",").filter(Boolean);
+  }
+
+  return undefined;
+}
+
+function normalizeTimeRange(value) {
+  const normalized = String(value || "").toLowerCase();
+  return ["day", "week", "month", "year"].includes(normalized)
+    ? normalized
+    : undefined;
+}
+
+function normalizePageNumber(value) {
+  const parsed = Number.parseInt(value ?? "0", 10);
+  return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
+}
+
+async function handleSearch(request, params, requestId) {
+  const query = String(params.q || params.query || "").trim();
+  const requestToken = getRequestToken(request, params.token);
+  const startedAt = Date.now();
+
+  if (!query) {
+    throw new ApiError({
+      status: 400,
+      code: "MISSING_QUERY",
+      category: "validation",
+      message: "Please provide 'q' or 'query' parameter",
+    });
+  }
+
+  await enforceRateLimit(request, getRateLimitToken(requestToken));
+
+  if (!verifyToken(requestToken)) {
+    throw new ApiError({
+      status: 401,
+      code: "UNAUTHORIZED",
+      category: "auth",
+      message: "Invalid or missing authentication token",
+    });
+  }
+
+  const { response, meta } = await searchAllWithMeta({
+    query,
+    engines: normalizeEngineParam(params.engines),
+    language: params.language || params.lang || env.DEFAULT_LANGUAGE,
+    time_range: normalizeTimeRange(params.time_range || params.timeRange),
+    pageno: normalizePageNumber(params.pageno || params.page),
+  });
+
+  return jsonResponse(
+    response,
+    200,
+    buildSearchResponseHeaders({
+      requestId,
+      durationMs: Date.now() - startedAt,
+      meta,
+    })
+  );
+}
+
 async function handleRequest(request) {
   const url = new URL(request.url);
 
-  // Handle CORS preflight
   if (request.method === "OPTIONS") {
     return new Response(null, { headers: CORS_HEADERS });
   }
 
-  // Only allow GET and POST
   if (request.method !== "GET" && request.method !== "POST") {
     return new Response("Method Not Allowed", {
       status: 405,
@@ -158,33 +203,6 @@ async function handleRequest(request) {
     });
   }
 
-  // Parse query parameters
-  let params = {};
-  if (request.method === "POST") {
-    const formData = await request.formData();
-    params = Object.fromEntries(formData.entries());
-  } else {
-    params = Object.fromEntries(url.searchParams.entries());
-  }
-
-  // Verify authentication token
-  if (!verifyToken(request, params.token)) {
-    return new Response(
-      JSON.stringify({
-        error: "Unauthorized",
-        message: "Invalid or missing authentication token",
-      }),
-      {
-        status: 401,
-        headers: {
-          "Content-Type": "application/json",
-          ...CORS_HEADERS,
-        },
-      }
-    );
-  }
-
-  // Root path: return HTML UI
   if (url.pathname === "/") {
     return new Response(getSearchHtml(), {
       headers: {
@@ -194,61 +212,32 @@ async function handleRequest(request) {
     });
   }
 
-  // /search path: handle API requests
-  if (url.pathname === "/search") {
-    const query = params.q || params.query;
-
-    if (!query) {
-      return new Response(
-        JSON.stringify({
-          error: "Missing query parameter",
-          message: "Please provide 'q' or 'query' parameter",
-        }),
-        {
-          status: 400,
-          headers: {
-            "Content-Type": "application/json",
-            ...CORS_HEADERS,
-          },
-        }
-      );
-    }
-
-    // Parse engines parameter (optional)
-    const engines = params.engines?.split(",").filter(Boolean) || undefined;
-
-    try {
-      const response = await searchAll({ query, engines });
-
-      return new Response(JSON.stringify(response, null, 2), {
-        headers: {
-          "Content-Type": "application/json",
-          ...CORS_HEADERS,
-        },
-      });
-    } catch (error) {
-      console.error("[handleRequest] Error:", error);
-      return new Response(
-        JSON.stringify({
-          error: "Internal server error",
-          message: error.message,
-        }),
-        {
-          status: 500,
-          headers: {
-            "Content-Type": "application/json",
-            ...CORS_HEADERS,
-          },
-        }
-      );
-    }
+  if (url.pathname !== "/search") {
+    return new Response("Not Found", {
+      status: 404,
+      headers: CORS_HEADERS,
+    });
   }
 
-  // 404 for other paths
-  return new Response("Not Found", {
-    status: 404,
-    headers: CORS_HEADERS,
-  });
+  const requestId = getRequestId(request);
+
+  try {
+    const params = await parseRequestParams(request, url);
+    return await handleSearch(request, params, requestId);
+  } catch (error) {
+    const normalized = normalizeError(error);
+    const status = normalized.status || 500;
+    const headers = normalized.details?.retry_after
+      ? {
+          "Retry-After": String(normalized.details.retry_after),
+          "X-Search-Request-Id": requestId,
+        }
+      : {
+          "X-Search-Request-Id": requestId,
+        };
+    console.error("[handleRequest] Error:", normalized.code, normalized.message);
+    return jsonResponse(toErrorPayload(normalized), status, headers);
+  }
 }
 
 export default {

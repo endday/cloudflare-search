@@ -30,14 +30,41 @@ workers_dev = true
 # 环境变量(可选)
 # ============================================
 [vars]
-# Google Custom Search API 配置
-# GOOGLE_API_KEY = ""
-# GOOGLE_CX = ""
-
 # API 访问令牌(可选)
 # 配置后，所有 /search 请求都需要提供此 token 进行鉴权
 # 可以通过 Authorization header (Bearer token) 或 query 参数 (?token=xxx) 传递
 # TOKEN = ""
+
+# 搜索网关配置(可选)
+# DEFAULT_ENGINES = "bing,startpage,mojeek,duckduckgo,brave"
+# DEFAULT_TIMEOUT = "4000"
+# HEDGED_FALLBACK_DELAY_MS = "400"
+# FALLBACK_MIN_RESULTS = "6"
+# FALLBACK_MIN_CONTRIBUTING_ENGINES = "2"
+# CACHE_TTL_SECONDS = "300"
+# STALE_CACHE_TTL_SECONDS = "1800"
+# RATE_LIMIT_WINDOW_SECONDS = "60"
+# RATE_LIMIT_MAX_REQUESTS = "60"
+# HEALTH_FAILURE_THRESHOLD = "2"
+# HEALTH_COOLDOWN_SECONDS = "180"
+# HEALTH_STATE_TTL_SECONDS = "3600"
+
+# ============================================
+# KV 缓存绑定(可选)
+# ============================================
+# 创建命令: wrangler kv namespace create SEARCH_KV
+# [[kv_namespaces]]
+# binding = "SEARCH_KV"
+# id = "your-kv-namespace-id"
+
+# ============================================
+# KV 状态绑定(可选)
+# ============================================
+# 用于跨 isolate 共享限流计数和引擎健康度
+# 创建命令: wrangler kv namespace create SEARCH_STATE_KV
+# [[kv_namespaces]]
+# binding = "SEARCH_STATE_KV"
+# id = "your-state-kv-namespace-id"
 
 # ============================================
 # 环境配置(可选)

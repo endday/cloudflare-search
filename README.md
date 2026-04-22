@@ -10,11 +10,15 @@ English | [中文](./README.zh.md)
 
 ## Features
 
-- 🔍 **Multi-engine Aggregation** - Use multiple search engines at the same time (Google, Brave, DuckDuckGo, Bing)
+- 🔍 **Prioritized Search Gateway** - Use Bing first, then Startpage, Mojeek, DuckDuckGo, and Brave as fallback engines
 - 🤖 **AI Enhanced (MCP)** - Native support for Model Context Protocol, one-click search tool integration for **OpenClaw** / **Claude Code** / **Codex**
-- ⚡ **Parallel Search** - All search engines are requested concurrently for faster results
-- 🛡️ **Fault Tolerance** - Failure of a single engine does not affect others; unresponsive engines are automatically marked
+- ⚡ **Smart Fallback** - Stop after enough deduplicated results instead of always querying every engine
+- 🛡️ **Fault Tolerance** - Timeout, parse, and upstream errors are classified; unhealthy engines are cooled down automatically
+- 🧹 **Deduplication & Ranking** - Canonicalize URLs, remove duplicate results, and rank by engine priority + query relevance
+- 💾 **KV Cache** - Fresh-cache + stale-if-error support with configurable TTL
+- 🚦 **Simple Rate Limiting** - Per-token/IP fixed-window rate limit, with optional KV-backed shared state
 - ⏱️ **Timeout Control** - Configurable request timeout to avoid long waits
+- 🪂 **Hedged Fallback** - Trigger the next fallback early when the primary engine is slow
 - 🔒 **Token Authentication** - Supports token auth to protect the service from abuse
 - 🌍 **CORS Support** - Full cross-origin resource sharing support
 - 🎨 **Web Interface** - Provides a clean search UI for easy testing
@@ -57,6 +61,15 @@ Edit your config file ([configuration guide](https://modelcontextprotocol.io/qui
 	}
 }
 ```
+
+#### Observability Headers
+
+- `X-Search-Request-Id`: request identifier for log correlation
+- `X-Search-Cache`: `miss` / `hit` / `revalidated` / `stale-if-error`
+- `X-Search-Fallback-Order`: engine priority order for this request
+- `X-Search-Fallback-Path`: engines actually started for this request
+- `X-Search-Duration-Ms`: total gateway duration
+- `Server-Timing`: per-engine timing data
 
 **Environment Variables**:
 
@@ -132,7 +145,7 @@ Search using query parameters:
 curl "https://$YOUR-DOMAIN/search?q=cloudflare"
 
 # Specify search engines
-curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=google,brave"
+curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=bing,startpage"
 
 # Use token authentication (if TOKEN env var is configured)
 curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
@@ -145,7 +158,7 @@ Submit search by POST form:
 ```bash
 curl -X POST "https://$YOUR-DOMAIN/search" \
 	-d "q=cloudflare" \
-	-d "engines=google,brave"
+	-d "engines=bing,startpage" \
 	-d "token=$YOUR-TOKEN" # if TOKEN env var is configured
 ```
 
@@ -160,15 +173,19 @@ Used to execute search queries and return aggregated results.
 | Parameter     | Type     | Required | Description                                                | Example          |
 | ------------- | -------- | -------- | ---------------------------------------------------------- | ---------------- |
 | `q` / `query` | `string` | yes      | Search keyword                                             | `cloudflare`     |
-| `engines`     | `string` | no       | Specify search engines, separated by commas               | `google,brave`   |
+| `engines`     | `string` | no       | Specify search engines, separated by commas               | `bing,startpage` |
+| `language`    | `string` | no       | Language/region hint passed to supported engines          | `en`, `zh-CN`    |
+| `time_range`  | `string` | no       | Time filter: `day`, `week`, `month`, or `year`            | `month`          |
+| `pageno`      | `number` | no       | Zero-based page number                                    | `0`              |
 | `token`       | `string` | no/yes   | Access token (required when `TOKEN` env var is configured) | `$YOUR-TOKEN`    |
 
 **Supported Search Engines**:
 
-- `google` - Google Search (requires API Key configuration)
-- `brave` - Brave Search
-- `duckduckgo` - DuckDuckGo Search
 - `bing` - Bing Search
+- `startpage` - Startpage Search
+- `mojeek` - Mojeek Search
+- `duckduckgo` - DuckDuckGo Search
+- `brave` - Brave Search
 
 #### Response Value
 
@@ -191,12 +208,17 @@ Used to execute search queries and return aggregated results.
 
 ```bash
 # GET request
-curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=google,brave"
+curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=bing,startpage"
 
-# POST request
+# JSON POST request
+curl -X POST "https://$YOUR-DOMAIN/search" \
+	-H "Content-Type: application/json" \
+	-d '{"q":"cloudflare","engines":["bing","startpage"],"language":"en","time_range":"month"}'
+
+# Form POST request
 curl -X POST "https://$YOUR-DOMAIN/search" \
 	-H "Content-Type: application/x-www-form-urlencoded" \
-	-d "q=cloudflare&engines=google,brave"
+	-d "q=cloudflare&engines=bing,startpage"
 ```
 
 #### Response Example
@@ -205,20 +227,20 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 {
 	"query": "cloudflare",
 	"number_of_results": 15,
-	"enabled_engines": ["google", "brave", "duckduckgo"],
+	"enabled_engines": ["bing", "startpage", "mojeek", "duckduckgo", "brave"],
 	"unresponsive_engines": [],
 	"results": [
 		{
 			"title": "Cloudflare - The Web Performance & Security Company",
 			"description": "Cloudflare is on a mission to help build a better Internet...",
 			"url": "https://www.cloudflare.com/",
-			"engine": "google"
+			"engine": "bing"
 		},
 		{
 			"title": "Cloudflare Workers",
 			"description": "Deploy serverless code instantly across the globe...",
 			"url": "https://workers.cloudflare.com/",
-			"engine": "brave"
+			"engine": "startpage"
 		}
 	]
 }
@@ -228,35 +250,48 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 
 ### Supported Search Engines
 
-| Engine         | Description                  | Configuration Required          | Enabled by Default |
-| -------------- | ---------------------------- | ------------------------------- | ------------------ |
-| **Google**     | Google Custom Search API     | Requires `GOOGLE_API_KEY` and `GOOGLE_CX` | yes                |
-| **Brave**      | Brave Search API             | -                               | yes                |
-| **DuckDuckGo** | DuckDuckGo Instant Answer API | -                             | yes                |
-| **Bing**       | Bing Search                  | -                               | no (unstable results) |
+| Engine         | Description                  | Configuration Required          | Default Role |
+| -------------- | ---------------------------- | ------------------------------- | ------------ |
+| **Bing**       | HTML search parser           | -                               | Primary      |
+| **Startpage**  | Serialized SERP payload      | -                               | Fallback 1   |
+| **Mojeek**     | Simple HTML parser           | -                               | Fallback 2   |
+| **DuckDuckGo** | HTML search endpoint         | -                               | Fallback 3   |
+| **Brave**      | HTML result parser, no `eval` | -                              | Fallback 4   |
 
 ### Basic Working Approach
 
-1. **Parallel Requests**: All enabled search engines are requested concurrently to improve response speed
-2. **Timeout Control**: Timeout of a single engine does not affect others; default timeout is 3 seconds
-3. **Result Aggregation**: Merge all successfully returned results and mark their source engine
-4. **Fault Tolerance**: Record unresponsive engines and return partial results instead of failing completely
+1. **Prioritized Fallback**: Try engines in order (`bing,startpage,mojeek,duckduckgo,brave` by default)
+2. **Early Stop**: Stop when deduplicated results reach `FALLBACK_MIN_RESULTS` and at least `FALLBACK_MIN_CONTRIBUTING_ENGINES` engines have contributed
+3. **Normalization**: Normalize titles/descriptions, canonicalize URLs, and remove duplicates
+4. **Health Control**: Repeated failures temporarily move an engine behind healthier fallbacks; bind `SEARCH_STATE_KV` to share state across isolates
+5. **Cache**: If `SEARCH_KV` is bound, final `/search` responses are cached by query + parameters, with stale-if-error fallback
+6. **Hedged Fallback**: When the primary path exceeds `HEDGED_FALLBACK_DELAY_MS`, the next fallback starts early
 
 ## Environment Variable Configuration
 
 ### Environment Variables
 
-| Variable Name      | Type     | Default  | Description                                         |
-| ------------------ | -------- | -------- | --------------------------------------------------- |
-| `DEFAULT_TIMEOUT`  | `string` | `"3000"` | Timeout per search engine request (milliseconds)   |
-| `GOOGLE_API_KEY`   | `string` | `null`   | https://console.cloud.google.com/apis/credentials  |
-| `GOOGLE_CX`        | `string` | `null`   | https://programmablesearchengine.google.com/       |
-| `TOKEN`            | `string` | `null`   | Access token. Enables auth when configured to prevent abuse |
+| Variable Name | Type | Default | Description |
+| ------------- | ---- | ------- | ----------- |
+| `DEFAULT_ENGINES` | `string`/`array` | `bing,startpage,mojeek,duckduckgo,brave` | Priority/fallback order |
+| `DEFAULT_TIMEOUT` | `string` | `"4000"` | Timeout per engine request, in milliseconds |
+| `HEDGED_FALLBACK_DELAY_MS` | `string` | `"400"` | Start the next fallback early when the current engine is slow |
+| `FALLBACK_MIN_RESULTS` | `string` | `"6"` | Stop fallback after this many deduplicated results |
+| `FALLBACK_MIN_CONTRIBUTING_ENGINES` | `string` | `"2"` | Minimum result-contributing engines before early stop |
+| `CACHE_TTL_SECONDS` | `string` | `"300"` | KV cache TTL; set `0` to disable cache |
+| `STALE_CACHE_TTL_SECONDS` | `string` | `"1800"` | Keep expired cache available for stale-if-error responses |
+| `RATE_LIMIT_WINDOW_SECONDS` | `string` | `"60"` | Rate-limit window size |
+| `RATE_LIMIT_MAX_REQUESTS` | `string` | `"60"` | Requests allowed per token/IP per window; set `0` to disable |
+| `HEALTH_FAILURE_THRESHOLD` | `string` | `"2"` | Failures before temporary engine cooldown |
+| `HEALTH_COOLDOWN_SECONDS` | `string` | `"180"` | Engine cooldown duration |
+| `HEALTH_STATE_TTL_SECONDS` | `string` | `"3600"` | Retention time for engine health state in KV |
+| `TOKEN` | `string` | `null` | Access token. Enables auth when configured to prevent abuse |
 
 **Notes**:
 
-- Google Custom Search API free tier is limited to 100 requests per day
 - After `TOKEN` is configured, all requests must provide a valid token
+- Bind `SEARCH_STATE_KV` to share rate-limit counters and engine health across isolates; KV writes are eventually consistent, not strict atomic counters
+- Bind a KV namespace named `SEARCH_KV` to enable response caching; stale cache can still be returned if live upstream search fails
 
 ### Configuration Methods
 
@@ -266,10 +301,23 @@ Edit the `[vars]` section in `wrangler.toml`:
 
 ```toml
 [vars]
-GOOGLE_API_KEY = "your-google-api-key"
-GOOGLE_CX = "your-google-custom-search-cx"
-DEFAULT_TIMEOUT = "3000"
+DEFAULT_ENGINES = "bing,startpage,mojeek,duckduckgo,brave"
+DEFAULT_TIMEOUT = "4000"
+HEDGED_FALLBACK_DELAY_MS = "400"
+FALLBACK_MIN_CONTRIBUTING_ENGINES = "2"
+CACHE_TTL_SECONDS = "300"
+STALE_CACHE_TTL_SECONDS = "1800"
+RATE_LIMIT_MAX_REQUESTS = "60"
+HEALTH_STATE_TTL_SECONDS = "3600"
 TOKEN = "your-secret-token-here"
+
+[[kv_namespaces]]
+binding = "SEARCH_KV"
+id = "your-kv-namespace-id"
+
+[[kv_namespaces]]
+binding = "SEARCH_STATE_KV"
+id = "your-state-kv-namespace-id"
 ```
 
 #### Method 2: Cloudflare Dashboard
@@ -286,7 +334,7 @@ Build your own aggregated search API and combine results from multiple search en
 
 ```javascript
 const response = await fetch(
-	"https://$YOUR-DOMAIN/search?q=javascript&engines=google,brave",
+	"https://$YOUR-DOMAIN/search?q=javascript&engines=bing,startpage",
 );
 const data = await response.json();
 console.log(`Found ${data.number_of_results} results`);
@@ -311,7 +359,7 @@ async function search(query) {
 Collect results from multiple search engines for comparative analysis:
 
 ```javascript
-const engines = ["google", "brave", "duckduckgo"];
+const engines = ["bing", "startpage", "duckduckgo"];
 const results = await fetch(
 	`https://$YOUR-DOMAIN/search?q=AI&engines=${engines.join(",")}`,
 );
@@ -339,14 +387,18 @@ With MCP (Model Context Protocol), AI assistants can directly call your search s
 	 - In Worker settings, click **Triggers** > **Add Custom Domain** to add a custom domain
 
 2. **Search Engine Limits**
-	 - Google API free tier is limited to 100 requests per day
-	 - Other search engines generally do not have strict limits, but please use responsibly
+	 - HTML-based engines may change their markup over time, so parser fixture tests matter
+	 - Search engines may temporarily rate-limit frequent requests
 	 - Frequent requests may cause temporary rate limiting
 
 3. **Timeout Settings**
-	 - Default timeout per engine is 3 seconds
+	 - Default timeout per engine is 4 seconds
 	 - Can be adjusted with `DEFAULT_TIMEOUT`
 	 - Do not set it too high to avoid long overall response times
+
+4. **KV Cache**
+	 - Bind `SEARCH_KV` if you want cross-request response caching
+	 - Cache keys include query, engine list, language, time range, and page number
 
 ### 🔒 Security Configuration
 
@@ -380,7 +432,6 @@ A: Possible reasons:
 - Search engine API is temporarily unavailable or timed out
 - No relevant results for the search keyword
 - Search engine has rate-limited access
-- Google requires API Key configuration before use
 
 You can check the `unresponsive_engines` field in the response to see which engines did not respond.
 
@@ -388,12 +439,25 @@ You can check the `unresponsive_engines` field in the response to see which engi
 
 A: Recommendations:
 
-- Reduce the number of enabled search engines and only use the engines you need
-- Adjust timeout (`DEFAULT_TIMEOUT`) appropriately
+- Keep the default fallback chain and let the gateway stop early
+- Bind `SEARCH_KV` and tune `CACHE_TTL_SECONDS`
+- Use `STALE_CACHE_TTL_SECONDS` to improve availability when upstream engines fail
+- Bind `SEARCH_STATE_KV` so rate limiting and engine health are shared across isolates
+- Adjust `DEFAULT_TIMEOUT`, `HEDGED_FALLBACK_DELAY_MS`, `FALLBACK_MIN_RESULTS`, and `FALLBACK_MIN_CONTRIBUTING_ENGINES` appropriately
 
-### Q: Why is Bing search disabled by default?
+### Q: How does fallback work?
 
-A: Bing search results are currently not stable enough, and may return content with low relevance to the query. If needed, you can manually specify `engines=bing` in requests or modify `DEFAULT_ENGINES` in `envs.js`.
+A: The gateway tries engines in order. By default:
+
+1. `bing`
+2. `startpage`
+3. `mojeek`
+4. `duckduckgo`
+5. `brave`
+
+It stops once deduplicated results reach `FALLBACK_MIN_RESULTS` and at least `FALLBACK_MIN_CONTRIBUTING_ENGINES` engines have contributed results.
+
+If the primary engine is still slow after `HEDGED_FALLBACK_DELAY_MS`, the gateway starts the next fallback early to reduce tail latency.
 
 ### Q: How can I protect the service from abuse?
 
@@ -404,6 +468,10 @@ A: It is recommended to configure the `TOKEN` environment variable to enable aut
 3. After configuration, all requests must provide a valid token
 
 Authentication failure returns a 401 error.
+
+### Q: Does rate limiting work globally?
+
+A: If `SEARCH_STATE_KV` is bound, counters are shared across isolates and are suitable for basic abuse protection. Cloudflare KV writes are eventually consistent, so this is not a strict atomic global limiter; use Durable Objects later if you need hard global consistency.
 
 ## Disclaimer
 
@@ -427,7 +495,6 @@ Issues and Pull Requests are welcome!
 
 - [Project GitHub](https://github.com/Yrobot/cloudflare-search)
 - [Cloudflare Workers Docs](https://developers.cloudflare.com/workers/)
-- [Google Custom Search API](https://developers.google.com/custom-search/v1/overview)
 
 ## Support the Project
 
