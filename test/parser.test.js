@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   extractBingRedirectUrl,
   parseBingResults,
+  parseBingRssResults,
   default as searchBing,
 } from "../utils/searchBing.js";
 import { parseBraveResults } from "../utils/searchBrave.js";
@@ -47,6 +48,61 @@ test("parses Bing organic HTML", async () => {
   assert.equal(results[0].url, "https://example.com/workers");
 });
 
+test("parses Bing fallback result containers without b_algo class", () => {
+  const html = `
+    <main>
+      <ol id="b_results">
+        <li class="b_ans">
+          <div class="answer-card">
+            <h2><a href="https://example.com/weather">明日天气预报</a></h2>
+            <p>查看明天的天气情况。</p>
+          </div>
+        </li>
+      </ol>
+    </main>
+  `;
+  const results = parseBingResults(html);
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].url, "https://example.com/weather");
+  assert.equal(results[0].title, "明日天气预报");
+});
+
+test("parses Bing RSS fallback results", () => {
+  const xml = `<?xml version="1.0" encoding="utf-8" ?>
+    <rss version="2.0">
+      <channel>
+        <item>
+          <title><![CDATA[Cloudflare Workers]]></title>
+          <link>https://example.com/workers?ref=bing&amp;lang=en</link>
+          <description><![CDATA[Deploy code globally.]]></description>
+        </item>
+      </channel>
+    </rss>`;
+  const results = parseBingRssResults(xml);
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].url, "https://example.com/workers?ref=bing&lang=en");
+  assert.equal(results[0].description, "Deploy code globally.");
+});
+
+test("rejects Bing RSS payloads with only malformed items", () => {
+  const xml = `<?xml version="1.0" encoding="utf-8" ?>
+    <rss version="2.0">
+      <channel>
+        <item>
+          <title></title>
+          <link></link>
+          <description><![CDATA[No usable fields.]]></description>
+        </item>
+      </channel>
+    </rss>`;
+
+  assert.throws(() => parseBingRssResults(xml), {
+    code: "UPSTREAM_PARSE_ERROR",
+  });
+});
+
 test("extracts Bing redirect URLs safely", () => {
   const target = "https://example.com/article";
   const encoded = btoa(target);
@@ -74,6 +130,41 @@ test("rejects unsupported Bing pagination before fetching", async () => {
   } finally {
     fetchCapture.restore();
   }
+});
+
+test("falls back to Bing RSS when HTML has no parseable results", async () => {
+  const rss = `<?xml version="1.0" encoding="utf-8" ?>
+    <rss version="2.0">
+      <channel>
+        <item>
+          <title>Cloudflare Workers RSS</title>
+          <link>https://example.com/rss-workers</link>
+          <description>RSS fallback result.</description>
+        </item>
+      </channel>
+    </rss>`;
+  const fetchCapture = installFetchCapture((url, _init, callCount) =>
+    new Response(callCount === 1 ? "<html><body>No organic results</body></html>" : rss, {
+      status: 200,
+      headers: {
+        "content-type": callCount === 1 ? "text/html; charset=utf-8" : "application/rss+xml; charset=utf-8",
+      },
+    })
+  );
+
+  let results;
+  try {
+    results = await searchBing({
+      query: "cloudflare workers",
+      language: "en",
+    });
+  } finally {
+    fetchCapture.restore();
+  }
+
+  assert.equal(fetchCapture.calls.length, 2);
+  assert.match(fetchCapture.calls[1].url, /[?&]format=rss(?:&|$)/);
+  assert.equal(results[0].url, "https://example.com/rss-workers");
 });
 
 test("parses Brave HTML without eval", async () => {
@@ -195,6 +286,6 @@ test("deduplicates by canonical URL and prefers higher priority engine", () => {
   });
 
   assert.equal(results.length, 1);
-  assert.equal(results[0].engine, "bing");
+  assert.equal(results[0].engine, "startpage");
   assert.equal(results[0].url, "https://example.com/workers");
 });

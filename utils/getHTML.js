@@ -155,6 +155,44 @@ export function getSearchHtml() {
                     🔍 开始搜索
                   </h2>
                   <form id="searchForm" class="space-y-4">
+                    ${
+                      TOKEN_ENABLED
+                        ? `
+                    <div class="rounded-2xl border border-blue-200 bg-blue-50/80 p-4 dark:border-blue-800/40 dark:bg-blue-900/10">
+                      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <label for="tokenInput" class="block text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                            访问 Token
+                          </label>
+                          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+                            仅用于当前页面调试，会保存在本地浏览器，搜索和验证都会走 Authorization 头。
+                          </p>
+                        </div>
+                        <span id="tokenStatusBadge" class="inline-flex items-center rounded-full bg-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                          未验证
+                        </span>
+                      </div>
+                      <div class="mt-3 flex flex-col gap-3 sm:flex-row">
+                        <input
+                          type="password"
+                          id="tokenInput"
+                          placeholder="输入 Bearer Token"
+                          autocomplete="off"
+                          class="flex-1 rounded-md bg-white px-4 py-2 text-sm text-zinc-900 shadow-sm ring-1 ring-inset ring-zinc-300 placeholder:text-zinc-400 focus:ring-2 focus:ring-blue-500 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-zinc-700 dark:placeholder:text-zinc-500"
+                        >
+                        <button
+                          type="button"
+                          id="verifyTokenBtn"
+                          class="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                        >
+                          验证 Token
+                        </button>
+                      </div>
+                      <p id="tokenStatusText" class="mt-3 hidden rounded-md px-3 py-2 text-xs"></p>
+                    </div>
+                    `
+                        : ""
+                    }
                     <div>
                       <label for="searchQuery" class="block text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-2">
                         搜索关键词
@@ -174,22 +212,10 @@ export function getSearchHtml() {
                       </label>
                       <div class="grid grid-cols-2 gap-2">
                         <label class="flex items-center space-x-2 cursor-pointer">
-                          <input type="checkbox" name="engine" value="bing" ${handlerEngineDefaultChecked(
-                            "bing"
-                          )} class="rounded text-blue-500 focus:ring-blue-500">
-                          <span class="text-sm text-zinc-700 dark:text-zinc-300">Bing</span>
-                        </label>
-                        <label class="flex items-center space-x-2 cursor-pointer">
                           <input type="checkbox" name="engine" value="startpage" ${handlerEngineDefaultChecked(
                             "startpage"
                           )} class="rounded text-blue-500 focus:ring-blue-500">
                           <span class="text-sm text-zinc-700 dark:text-zinc-300">Startpage</span>
-                        </label>
-                        <label class="flex items-center space-x-2 cursor-pointer">
-                          <input type="checkbox" name="engine" value="mojeek" ${handlerEngineDefaultChecked(
-                            "mojeek"
-                          )} class="rounded text-blue-500 focus:ring-blue-500">
-                          <span class="text-sm text-zinc-700 dark:text-zinc-300">Mojeek</span>
                         </label>
                         <label class="flex items-center space-x-2 cursor-pointer">
                           <input type="checkbox" name="engine" value="duckduckgo" ${handlerEngineDefaultChecked(
@@ -203,6 +229,18 @@ export function getSearchHtml() {
                           )} class="rounded text-blue-500 focus:ring-blue-500">
                           <span class="text-sm text-zinc-700 dark:text-zinc-300">Brave</span>
                         </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                          <input type="checkbox" name="engine" value="mojeek" ${handlerEngineDefaultChecked(
+                            "mojeek"
+                          )} class="rounded text-blue-500 focus:ring-blue-500">
+                          <span class="text-sm text-zinc-700 dark:text-zinc-300">Mojeek</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                          <input type="checkbox" name="engine" value="bing" ${handlerEngineDefaultChecked(
+                            "bing"
+                          )} class="rounded text-blue-500 focus:ring-blue-500">
+                          <span class="text-sm text-zinc-700 dark:text-zinc-300">Bing</span>
+                        </label>
                       </div>
                     </div>
 
@@ -213,6 +251,7 @@ export function getSearchHtml() {
                     >
                       开始搜索
                     </button>
+                    <p id="searchStatus" class="hidden rounded-md px-3 py-2 text-sm"></p>
                   </form>
                 </div>
 
@@ -543,34 +582,181 @@ export function getSearchHtml() {
   </div>
 
   <script>
-    // 获取当前域名
     const currentOrigin = window.location.origin;
     const TOKEN_ENABLED = ${TOKEN_ENABLED};
-
-    // 从 URL 获取 token (如果有)
+    const tokenStorageKey = 'cloudflare-search-token';
     const urlParams = new URLSearchParams(window.location.search);
-    const currentToken = urlParams.get('token') || '';
+    const tokenInput = document.getElementById('tokenInput');
+    const verifyTokenBtn = document.getElementById('verifyTokenBtn');
+    const tokenStatusBadge = document.getElementById('tokenStatusBadge');
+    const tokenStatusText = document.getElementById('tokenStatusText');
+    const searchStatus = document.getElementById('searchStatus');
+    const initialToken = urlParams.get('token') || (TOKEN_ENABLED ? localStorage.getItem(tokenStorageKey) || '' : '');
 
-    // 填充 API 示例
-    const tokenParam = TOKEN_ENABLED && currentToken ? \`&token=\${currentToken}\` : '';
-    const tokenBodyParam = TOKEN_ENABLED && currentToken ? \`&token=\${currentToken}\` : '';
+    if (tokenInput) {
+      tokenInput.value = initialToken;
+    }
 
-    document.getElementById('apiExample1').textContent = currentOrigin + '/search?q=cloudflare' + tokenParam;
-    document.getElementById('apiExample2').textContent = 'curl -X POST "' + currentOrigin + '/search" -d "q=cloudflare&engines=bing,startpage' + tokenBodyParam + '"';
-    document.getElementById('mcp-config-json').innerHTML = \`{
+    function getCurrentToken() {
+      return tokenInput ? tokenInput.value.trim() : '';
+    }
+
+    function getAuthHeaders() {
+      const token = getCurrentToken();
+      return token ? { Authorization: \`Bearer \${token}\` } : {};
+    }
+
+    function setMessage(element, kind, text, size = 'text-sm') {
+      if (!element) {
+        return;
+      }
+
+      if (!text) {
+        element.className = 'hidden';
+        element.textContent = '';
+        return;
+      }
+
+      const styles = {
+        info: 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
+        loading: 'bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300',
+        success: 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-300',
+        error: 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300',
+      };
+
+      element.className = \`mt-3 rounded-md px-3 py-2 \${size} \${styles[kind] || styles.info}\`;
+      element.textContent = text;
+    }
+
+    function setTokenBadge(kind, text) {
+      if (!tokenStatusBadge) {
+        return;
+      }
+
+      const styles = {
+        idle: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
+        loading: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+        success: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+        error: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+      };
+
+      tokenStatusBadge.className = \`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium \${styles[kind] || styles.idle}\`;
+      tokenStatusBadge.textContent = text;
+    }
+
+    function updateExamples() {
+      const token = getCurrentToken();
+      const exampleToken = token || 'YOUR_TOKEN';
+      const getExample = TOKEN_ENABLED
+        ? \`curl -H "Authorization: Bearer \${exampleToken}" "\${currentOrigin}/search?q=cloudflare"\`
+        : currentOrigin + '/search?q=cloudflare';
+      const postExample = TOKEN_ENABLED
+        ? \`curl -X POST "\${currentOrigin}/search" \\\\\n  -H "Authorization: Bearer \${exampleToken}" \\\\\n  -d "q=cloudflare&engines=bing,startpage"\`
+        : \`curl -X POST "\${currentOrigin}/search" -d "q=cloudflare&engines=bing,startpage"\`;
+      const mcpEnv = [
+        \`        "CF_SEARCH_URL": "\${currentOrigin}"\`,
+        ...(TOKEN_ENABLED ? [\`        "CF_SEARCH_TOKEN": "\${exampleToken}"\`] : []),
+      ].join(',\\n');
+
+      document.getElementById('apiExample1').textContent = getExample;
+      document.getElementById('apiExample2').textContent = postExample;
+      document.getElementById('mcp-config-json').textContent = \`{
   "mcpServers": {
     "cloudflare-search": {
       "command": "npx",
       "args": ["-y", "@yrobot/cf-search-mcp"],
       "env": {
-        "CF_SEARCH_URL": "\${currentOrigin}",
-        "CF_SEARCH_TOKEN": "\${TOKEN_ENABLED ? TOKEN_ENABLED : ""}"
+\${mcpEnv}
       }
     }
   }
-}\`
+}\`;
+    }
 
-    // 搜索表单提交
+    async function parseJsonResponse(response) {
+      let data = null;
+
+      try {
+        data = await response.json();
+      } catch (_) {
+        data = null;
+      }
+
+      if (!response.ok) {
+        const error = new Error(data?.message || '请求失败 (' + response.status + ')');
+        error.status = response.status;
+        error.code = data?.code || '';
+        error.details = data?.details || null;
+        throw error;
+      }
+
+      return data;
+    }
+
+    function isAuthError(error) {
+      return (
+        error?.status === 401 ||
+        error?.status === 403 ||
+        error?.code === 'UNAUTHORIZED' ||
+        error?.code === 'FORBIDDEN'
+      );
+    }
+
+    updateExamples();
+
+    if (TOKEN_ENABLED && tokenInput) {
+      setTokenBadge('idle', '未验证');
+      setMessage(
+        tokenStatusText,
+        initialToken ? 'info' : 'error',
+        initialToken ? '已填入 token，点击“验证 Token”测试是否有效。' : '当前服务已开启鉴权，请先输入 token。',
+        'text-xs'
+      );
+
+      tokenInput.addEventListener('input', () => {
+        setTokenBadge('idle', '未验证');
+        setMessage(
+          tokenStatusText,
+          getCurrentToken() ? 'info' : 'error',
+          getCurrentToken() ? 'Token 已修改，请重新验证。' : '当前服务已开启鉴权，请先输入 token。',
+          'text-xs'
+        );
+        updateExamples();
+      });
+    }
+
+    if (verifyTokenBtn) {
+      verifyTokenBtn.addEventListener('click', async () => {
+        setTokenBadge('loading', '验证中');
+        setMessage(tokenStatusText, 'loading', '正在验证 token...', 'text-xs');
+        verifyTokenBtn.disabled = true;
+
+        try {
+          const response = await fetch(\`\${currentOrigin}/auth/verify\`, {
+            headers: getAuthHeaders(),
+          });
+          const data = await parseJsonResponse(response);
+
+          localStorage.setItem(tokenStorageKey, getCurrentToken());
+          setTokenBadge('success', '已通过');
+          setMessage(
+            tokenStatusText,
+            'success',
+            data.token_required
+              ? 'Token 有效，首页搜索会自动带上 Authorization 头。'
+              : '当前服务未开启鉴权，token 不是必需的。',
+            'text-xs'
+          );
+        } catch (error) {
+          setTokenBadge(isAuthError(error) ? 'error' : 'idle', isAuthError(error) ? '未通过' : '待重试');
+          setMessage(tokenStatusText, 'error', error.message, 'text-xs');
+        } finally {
+          verifyTokenBtn.disabled = false;
+          updateExamples();
+        }
+      });
+    }
+
     document.getElementById('searchForm').addEventListener('submit', async function(event) {
       event.preventDefault();
 
@@ -585,22 +771,34 @@ export function getSearchHtml() {
       // 显示加载状态
       const searchBtn = document.getElementById('searchBtn');
       const originalText = searchBtn.textContent;
+      setMessage(searchStatus, 'loading', '正在请求搜索服务...');
       searchBtn.textContent = '搜索中...';
       searchBtn.disabled = true;
 
       try {
-        // 调用搜索 API
         let url = \`\${currentOrigin}/search?q=\${encodeURIComponent(query)}\`;
         if (engines) url += \`&engines=\${engines}\`;
-        if (TOKEN_ENABLED && currentToken) url += \`&token=\${currentToken}\`;
 
-        const response = await fetch(url);
-        const data = await response.json();
+        const response = await fetch(url, {
+          headers: getAuthHeaders(),
+        });
+        const data = await parseJsonResponse(response);
 
-        // 显示结果
+        if (TOKEN_ENABLED && getCurrentToken()) {
+          localStorage.setItem(tokenStorageKey, getCurrentToken());
+          setTokenBadge('success', '已通过');
+          setMessage(tokenStatusText, 'success', 'Token 校验通过，已用于本次搜索。', 'text-xs');
+        }
+
         displayResults(data);
+        setMessage(searchStatus, 'success', \`搜索完成，共返回 \${data.number_of_results} 条结果。\`);
       } catch (error) {
-        alert('搜索失败: ' + error.message);
+        if (TOKEN_ENABLED && isAuthError(error)) {
+          setTokenBadge('error', '未通过');
+          setMessage(tokenStatusText, 'error', error.message, 'text-xs');
+        }
+
+        setMessage(searchStatus, 'error', error.message);
       } finally {
         searchBtn.textContent = originalText;
         searchBtn.disabled = false;
@@ -643,6 +841,7 @@ export function getSearchHtml() {
     document.getElementById('clearBtn').addEventListener('click', function() {
       document.getElementById('resultsSection').classList.add('hidden');
       document.getElementById('results').innerHTML = '';
+      setMessage(searchStatus, 'info', '');
     });
   </script>
 </body>

@@ -111,7 +111,7 @@ async function searchDuckDuckGo(params) {
 export const duckDuckGoAdapter = {
   name: "duckduckgo",
   label: "DuckDuckGo",
-  priority: 70,
+  priority: 95,
   supports: {
     language: true,
     time_range: true,

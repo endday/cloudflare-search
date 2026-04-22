@@ -25,12 +25,49 @@ const BING_LANGUAGE = {
   "zh-tw": { setlang: "zh-Hant", cc: "tw", mkt: "zh-TW" },
 };
 
+const XML_ENTITIES = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+};
+
 function decodeBase64(value) {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   const padding = "=".repeat((4 - (normalized.length % 4)) % 4);
   const binary = atob(normalized + padding);
   const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
   return new TextDecoder().decode(bytes);
+}
+
+function decodeXmlEntities(value) {
+  return String(value || "").replace(
+    /&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi,
+    (match, entity) => {
+      const normalized = entity.toLowerCase();
+
+      if (normalized.startsWith("#")) {
+        const isHex = normalized[1] === "x";
+        const codePoint = Number.parseInt(
+          normalized.slice(isHex ? 2 : 1),
+          isHex ? 16 : 10
+        );
+
+        if (Number.isNaN(codePoint)) {
+          return match;
+        }
+
+        try {
+          return String.fromCodePoint(codePoint);
+        } catch (_) {
+          return match;
+        }
+      }
+
+      return XML_ENTITIES[normalized] || match;
+    }
+  );
 }
 
 export function extractBingRedirectUrl(bingUrl) {
@@ -55,10 +92,10 @@ export function extractBingRedirectUrl(bingUrl) {
 
 export function parseBingResults(html) {
   const root = parseHtml(html);
-  const resultNodes = root.querySelectorAll("li.b_algo");
+  const candidateNodes = collectBingResultNodes(root);
   const results = [];
 
-  for (const node of resultNodes) {
+  for (const node of candidateNodes) {
     const linkNode = node.querySelector("h2 a[href]");
     if (!linkNode) {
       continue;
@@ -86,15 +123,128 @@ export function parseBingResults(html) {
   }
 
   if (results.length === 0) {
+    const fallbackLinkCount = root.querySelectorAll("main h2 a[href]").length;
     throw new ApiError({
       status: 502,
       code: "UPSTREAM_PARSE_ERROR",
       category: "upstream",
-      message: "Bing parser could not find organic results",
+      message: `Bing parser could not find organic results (h2_links=${fallbackLinkCount})`,
     });
   }
 
   return normalizeResults(results);
+}
+
+function extractXmlTagContent(source, tagName) {
+  const match = source.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)</${tagName}>`, "i"));
+  if (!match) {
+    return "";
+  }
+
+  return match[1]
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, "$1")
+    .trim();
+}
+
+export function parseBingRssResults(xml) {
+  const items = [...xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)];
+  const results = normalizeResults(
+    items.map((item) => {
+      const source = item[1];
+
+      return {
+        title: cleanText(extractXmlTagContent(source, "title")),
+        url: extractBingRedirectUrl(
+          decodeXmlEntities(extractXmlTagContent(source, "link"))
+        ),
+        description: cleanText(extractXmlTagContent(source, "description")),
+      };
+    })
+  );
+
+  if (items.length === 0 || results.length === 0) {
+    throw new ApiError({
+      status: 502,
+      code: "UPSTREAM_PARSE_ERROR",
+      category: "upstream",
+      message: `Bing RSS parser could not find valid results (items=${items.length}, normalized=${results.length})`,
+    });
+  }
+
+  return results;
+}
+
+function isBingNoiseNode(node) {
+  let current = node;
+
+  while (current) {
+    const id = current.getAttribute?.("id") || "";
+    const className = current.getAttribute?.("class") || "";
+    const classList = className.split(/\s+/).filter(Boolean);
+
+    if (
+      id === "b_context" ||
+      id === "b_pole" ||
+      classList.includes("b_pag") ||
+      classList.includes("b_ad")
+    ) {
+      return true;
+    }
+
+    current = current.parentNode;
+  }
+
+  return false;
+}
+
+function findBingResultContainer(node) {
+  let current = node;
+  let nearestContainer = node.parentNode || node;
+
+  while (current) {
+    if (["li", "div", "article", "section"].includes(current.rawTagName)) {
+      nearestContainer = current;
+    }
+
+    const id = current.getAttribute?.("id") || "";
+    if (id === "b_results" || current.rawTagName === "main") {
+      return nearestContainer;
+    }
+
+    current = current.parentNode;
+  }
+
+  return nearestContainer;
+}
+
+function collectBingResultNodes(root) {
+  const selectors = ["li.b_algo", "div.b_algo", "#b_results h2 a[href]", "main h2 a[href]"];
+  const seenNodes = new Set();
+  const resultNodes = [];
+
+  for (const selector of selectors) {
+    for (const node of root.querySelectorAll(selector)) {
+      const linkNode = node.rawTagName === "a" ? node : node.querySelector("h2 a[href]");
+      if (!linkNode || isBingNoiseNode(linkNode)) {
+        continue;
+      }
+
+      const href = ensureAbsoluteUrl(linkNode.getAttribute("href"), "https://www.bing.com");
+      if (!href || href.startsWith("https://www.bing.com/search?")) {
+        continue;
+      }
+
+      const container = node.rawTagName === "a" ? findBingResultContainer(node) : node;
+      if (!container || seenNodes.has(container)) {
+        continue;
+      }
+
+      seenNodes.add(container);
+      resultNodes.push(container);
+    }
+  }
+
+  return resultNodes;
 }
 
 function buildBingSearchUrl({ query, language, time_range }) {
@@ -117,6 +267,12 @@ function buildBingSearchUrl({ query, language, time_range }) {
   return searchUrl;
 }
 
+function buildBingRssUrl({ query, language, time_range }) {
+  const searchUrl = buildBingSearchUrl({ query, language, time_range });
+  searchUrl.searchParams.set("format", "rss");
+  return searchUrl;
+}
+
 async function fetchBingHtml(searchUrl, { signal, language }) {
   const html = await fetchText(searchUrl.toString(), {
     signal,
@@ -131,6 +287,16 @@ async function fetchBingHtml(searchUrl, { signal, language }) {
   });
 
   return html;
+}
+
+async function fetchBingRss(searchUrl, { signal, language }) {
+  return fetchText(searchUrl.toString(), {
+    signal,
+    language,
+    headers: {
+      accept: "application/rss+xml,application/xml;q=0.9,text/xml;q=0.8,*/*;q=0.7",
+    },
+  });
 }
 
 async function searchBing(params) {
@@ -152,14 +318,27 @@ async function searchBing(params) {
     time_range,
   });
   const html = await fetchBingHtml(searchUrl, { signal, language });
+  try {
+    return parseBingResults(html);
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.code !== "UPSTREAM_PARSE_ERROR") {
+      throw error;
+    }
 
-  return parseBingResults(html);
+    const rssUrl = buildBingRssUrl({
+      query,
+      language,
+      time_range,
+    });
+    const rss = await fetchBingRss(rssUrl, { signal, language });
+    return parseBingRssResults(rss);
+  }
 }
 
 export const bingAdapter = {
   name: "bing",
   label: "Bing",
-  priority: 100,
+  priority: 50,
   supports: {
     language: true,
     time_range: true,

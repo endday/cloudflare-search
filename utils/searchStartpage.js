@@ -105,7 +105,7 @@ async function searchStartpage(params) {
 export const startpageAdapter = {
   name: "startpage",
   label: "Startpage",
-  priority: 90,
+  priority: 100,
   supports: {
     language: true,
     time_range: false,

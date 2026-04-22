@@ -83,7 +83,7 @@ async function searchBrave(params) {
 export const braveAdapter = {
   name: "brave",
   label: "Brave",
-  priority: 60,
+  priority: 90,
   supports: {
     language: true,
     time_range: true,

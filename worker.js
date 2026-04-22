@@ -145,6 +145,58 @@ function normalizePageNumber(value) {
   return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
 }
 
+function inferLanguageFromQuery(query, fallbackLanguage) {
+  const normalizedQuery = String(query || "");
+
+  if (/[\u3040-\u30ff]/u.test(normalizedQuery)) {
+    return "ja-JP";
+  }
+
+  if (/[\uac00-\ud7af]/u.test(normalizedQuery)) {
+    return "ko-KR";
+  }
+
+  if (/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/u.test(normalizedQuery)) {
+    return "zh-CN";
+  }
+
+  return fallbackLanguage;
+}
+
+function resolveSearchLanguage(params, query) {
+  return (
+    params.language ||
+    params.lang ||
+    inferLanguageFromQuery(query, env.DEFAULT_LANGUAGE)
+  );
+}
+
+async function handleAuthVerify(request, params, requestId) {
+  const requestToken = getRequestToken(request, params.token);
+
+  await enforceRateLimit(request, getRateLimitToken(requestToken));
+
+  if (!verifyToken(requestToken)) {
+    throw new ApiError({
+      status: 401,
+      code: "UNAUTHORIZED",
+      category: "auth",
+      message: "Invalid or missing authentication token",
+    });
+  }
+
+  return jsonResponse(
+    {
+      authorized: true,
+      token_required: !!env.TOKEN,
+    },
+    200,
+    {
+      "X-Search-Request-Id": requestId,
+    }
+  );
+}
+
 async function handleSearch(request, params, requestId) {
   const query = String(params.q || params.query || "").trim();
   const requestToken = getRequestToken(request, params.token);
@@ -173,7 +225,7 @@ async function handleSearch(request, params, requestId) {
   const { response, meta } = await searchAllWithMeta({
     query,
     engines: normalizeEngineParam(params.engines),
-    language: params.language || params.lang || env.DEFAULT_LANGUAGE,
+    language: resolveSearchLanguage(params, query),
     time_range: normalizeTimeRange(params.time_range || params.timeRange),
     pageno: normalizePageNumber(params.pageno || params.page),
   });
@@ -210,6 +262,32 @@ async function handleRequest(request) {
         ...CORS_HEADERS,
       },
     });
+  }
+
+  if (url.pathname === "/auth/verify") {
+    const requestId = getRequestId(request);
+
+    try {
+      const params = await parseRequestParams(request, url);
+      return await handleAuthVerify(request, params, requestId);
+    } catch (error) {
+      const normalized = normalizeError(error);
+      const status = normalized.status || 500;
+      const headers = normalized.details?.retry_after
+        ? {
+            "Retry-After": String(normalized.details.retry_after),
+            "X-Search-Request-Id": requestId,
+          }
+        : {
+            "X-Search-Request-Id": requestId,
+          };
+      console.error(
+        "[handleAuthVerify] Error:",
+        normalized.code,
+        normalized.message
+      );
+      return jsonResponse(toErrorPayload(normalized), status, headers);
+    }
   }
 
   if (url.pathname !== "/search") {

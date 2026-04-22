@@ -143,6 +143,20 @@ test("handles GET /search requests", async () => {
   assert.ok(response.headers.get("Server-Timing")?.includes("bing;dur="));
 });
 
+test("renders token input on homepage when auth is enabled", async () => {
+  const response = await worker.fetch(
+    createSearchRequest("/"),
+    createEnv({
+      TOKEN: "secret",
+    })
+  );
+  const html = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(html, /id="tokenInput"/);
+  assert.match(html, /\/auth\/verify/);
+});
+
 test("handles JSON POST /search requests", async () => {
   installFetchStub();
 
@@ -199,6 +213,38 @@ test("rejects requests without configured token", async () => {
 
   assert.equal(response.status, 401);
   assert.equal(payload.code, "UNAUTHORIZED");
+});
+
+test("verifies valid token through auth endpoint", async () => {
+  const response = await worker.fetch(
+    createSearchRequest("/auth/verify", {
+      headers: {
+        Authorization: "Bearer secret",
+      },
+    }),
+    createEnv({
+      TOKEN: "secret",
+    })
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.authorized, true);
+  assert.equal(payload.token_required, true);
+});
+
+test("returns normal auth error when token is missing on verify endpoint", async () => {
+  const response = await worker.fetch(
+    createSearchRequest("/auth/verify"),
+    createEnv({
+      TOKEN: "secret",
+    })
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 401);
+  assert.equal(payload.code, "UNAUTHORIZED");
+  assert.equal(payload.message, "Invalid or missing authentication token");
 });
 
 test("rate limits unauthorized requests by IP", async () => {
@@ -342,6 +388,34 @@ test("skips engines that do not support requested time filters", async () => {
   assert.equal(response.status, 200);
   assert.deepEqual(calls, ["bing"]);
   assert.deepEqual(payload.enabled_engines, ["bing"]);
+});
+
+test("infers zh-CN for Han queries when language is omitted", async () => {
+  let observedUrl = "";
+  installFetchStub({
+    bing: (url) => {
+      observedUrl = String(url);
+      return new Response(fixtures.bing, {
+        status: 200,
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+        },
+      });
+    },
+  });
+
+  const response = await worker.fetch(
+    createSearchRequest("/search?q=%E6%98%8E%E6%97%A5%E5%A4%A9%E6%B0%94&engines=bing"),
+    createEnv({
+      DEFAULT_LANGUAGE: "en",
+    })
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.results[0].engine, "bing");
+  assert.match(observedUrl, /[?&]setlang=zh-Hans(?:&|$)/);
+  assert.match(observedUrl, /[?&]mkt=zh-CN(?:&|$)/);
 });
 
 test("skips engines that do not support requested pages", async () => {
