@@ -149,6 +149,27 @@ export function getSearchHtml() {
                   }
                 </div>
 
+                <!-- Cloudflare 访问者区域 -->
+                <div class="mt-8 rounded-2xl border border-zinc-100 p-6 dark:border-zinc-700/40">
+                  <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h2 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                        🌐 Cloudflare 识别的访问者区域
+                      </h2>
+                      <p class="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                        这里显示 Cloudflare <code>request.cf</code> 返回的位置，用于解释 <code>location=auto</code> 的来源。
+                      </p>
+                    </div>
+                    <span id="geoStatusBadge" class="inline-flex w-fit items-center rounded-full bg-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                      加载中
+                    </span>
+                  </div>
+                  <div id="geoSummary" class="mt-4 text-sm text-zinc-700 dark:text-zinc-300">
+                    正在读取访问者区域...
+                  </div>
+                  <dl id="geoDetails" class="mt-4 grid grid-cols-1 gap-3 text-xs sm:grid-cols-2"></dl>
+                </div>
+
                 <!-- 搜索表单 -->
                 <div class="mt-8 rounded-2xl border border-zinc-100 p-6 dark:border-zinc-700/40">
                   <h2 class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-4">
@@ -624,6 +645,9 @@ export function getSearchHtml() {
     const tokenStatusBadge = document.getElementById('tokenStatusBadge');
     const tokenStatusText = document.getElementById('tokenStatusText');
     const searchStatus = document.getElementById('searchStatus');
+    const geoStatusBadge = document.getElementById('geoStatusBadge');
+    const geoSummary = document.getElementById('geoSummary');
+    const geoDetails = document.getElementById('geoDetails');
     const initialToken = urlParams.get('token') || (TOKEN_ENABLED ? localStorage.getItem(tokenStorageKey) || '' : '');
 
     if (tokenInput) {
@@ -679,6 +703,83 @@ export function getSearchHtml() {
 
       tokenStatusBadge.className = \`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium \${styles[kind] || styles.idle}\`;
       tokenStatusBadge.textContent = text;
+    }
+
+    function setGeoBadge(kind, text) {
+      if (!geoStatusBadge) {
+        return;
+      }
+
+      const styles = {
+        loading: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+        success: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+        error: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+      };
+
+      geoStatusBadge.className = \`inline-flex w-fit items-center rounded-full px-2.5 py-1 text-xs font-medium \${styles[kind] || styles.loading}\`;
+      geoStatusBadge.textContent = text;
+    }
+
+    function formatGeoValue(value) {
+      return value === undefined || value === null || value === '' ? '未知' : String(value);
+    }
+
+    function renderGeoDetails(geo) {
+      if (!geoDetails) {
+        return;
+      }
+
+      const items = [
+        ['IP', geo.ip],
+        ['城市', geo.city],
+        ['地区', geo.region],
+        ['地区代码', geo.region_code],
+        ['国家/地区', geo.country],
+        ['大洲', geo.continent],
+        ['时区', geo.timezone],
+        ['经纬度', geo.latitude && geo.longitude ? \`\${geo.latitude}, \${geo.longitude}\` : ''],
+        ['Cloudflare 机房', geo.colo],
+        ['ASN', geo.asn],
+        ['网络组织', geo.as_organization],
+      ];
+
+      geoDetails.innerHTML = items
+        .map(([label, value]) => \`
+          <div class="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
+            <dt class="text-zinc-500 dark:text-zinc-400">\${label}</dt>
+            <dd class="mt-1 break-all font-medium text-zinc-800 dark:text-zinc-100">\${formatGeoValue(value)}</dd>
+          </div>
+        \`)
+        .join('');
+    }
+
+    async function loadGeoInfo() {
+      if (!geoSummary || !geoDetails) {
+        return;
+      }
+
+      setGeoBadge('loading', '加载中');
+
+      try {
+        const response = await fetch(\`\${currentOrigin}/geo\`, {
+          headers: getAuthHeaders(),
+        });
+        const data = await parseJsonResponse(response);
+        const geo = data.geo || {};
+        const primaryLocation = [geo.city, geo.region, geo.country]
+          .filter(Boolean)
+          .join(' / ');
+
+        geoSummary.textContent = primaryLocation
+          ? \`Cloudflare 当前识别为：\${primaryLocation}\`
+          : 'Cloudflare 没有返回明确的城市/地区信息。';
+        renderGeoDetails(geo);
+        setGeoBadge('success', '已读取');
+      } catch (error) {
+        geoSummary.textContent = \`读取失败：\${error.message}\`;
+        geoDetails.innerHTML = '';
+        setGeoBadge('error', '读取失败');
+      }
     }
 
     function updateExamples() {
@@ -743,6 +844,7 @@ export function getSearchHtml() {
     }
 
     updateExamples();
+    loadGeoInfo();
 
     if (locationInput) {
       locationInput.addEventListener('input', updateExamples);

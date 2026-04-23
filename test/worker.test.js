@@ -198,6 +198,42 @@ test("uses request.cf city as default auto location", async () => {
   });
 });
 
+test("returns Cloudflare visitor geo metadata", async () => {
+  const response = await worker.fetch(
+    createSearchRequest(
+      "/geo",
+      {
+        headers: {
+          "cf-connecting-ip": "203.0.113.20",
+        },
+      },
+      {
+        city: "上海",
+        region: "Shanghai",
+        regionCode: "SH",
+        country: "CN",
+        continent: "AS",
+        timezone: "Asia/Shanghai",
+        latitude: "31.2304",
+        longitude: "121.4737",
+        colo: "PVG",
+        asn: 64512,
+        asOrganization: "Example Network",
+      }
+    ),
+    createEnv()
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.geo.ip, "203.0.113.20");
+  assert.equal(payload.geo.city, "上海");
+  assert.equal(payload.geo.region_code, "SH");
+  assert.equal(payload.geo.country, "CN");
+  assert.equal(payload.geo.colo, "PVG");
+  assert.equal(payload.geo.as_organization, "Example Network");
+});
+
 test("allows explicit location and location opt-out", async () => {
   installFetchStub();
 
@@ -276,6 +312,8 @@ test("renders token input on homepage when auth is enabled", async () => {
   assert.equal(response.status, 200);
   assert.match(html, /id="tokenInput"/);
   assert.match(html, /\/auth\/verify/);
+  assert.match(html, /id="geoSummary"/);
+  assert.match(html, /\/geo/);
 });
 
 test("handles JSON POST /search requests", async () => {

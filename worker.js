@@ -186,6 +186,29 @@ function getClientLocation(request) {
   };
 }
 
+function getClientGeoPayload(request) {
+  const cf = request.cf || {};
+
+  return {
+    ip:
+      request.headers.get("cf-connecting-ip") ||
+      request.headers.get("x-forwarded-for") ||
+      null,
+    city: cf.city || null,
+    region: cf.region || null,
+    region_code: cf.regionCode || null,
+    country: cf.country || null,
+    continent: cf.continent || null,
+    postal_code: cf.postalCode || null,
+    timezone: cf.timezone || null,
+    latitude: cf.latitude || null,
+    longitude: cf.longitude || null,
+    colo: cf.colo || null,
+    asn: cf.asn || null,
+    as_organization: cf.asOrganization || null,
+  };
+}
+
 function resolveLocationContext(request, params) {
   const locationValue = normalizeLocationValue(params.location);
 
@@ -410,6 +433,19 @@ async function handleRequest(request) {
       );
       return createErrorResponse(request, requestId, normalized);
     }
+  }
+
+  if (url.pathname === "/geo") {
+    return jsonResponse(
+      request,
+      {
+        geo: getClientGeoPayload(request),
+      },
+      200,
+      {
+        "X-Search-Request-Id": requestId,
+      }
+    );
   }
 
   if (url.pathname !== "/search") {
