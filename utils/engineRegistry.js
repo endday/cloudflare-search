@@ -3,7 +3,9 @@ import { bingAdapter } from "./searchBing.js";
 import { braveAdapter } from "./searchBrave.js";
 import { duckDuckGoAdapter } from "./searchDuckDuckGo.js";
 import { mojeekAdapter } from "./searchMojeek.js";
+import { qwantAdapter } from "./searchQwant.js";
 import { startpageAdapter } from "./searchStartpage.js";
+import { yahooAdapter } from "./searchYahoo.js";
 
 const ENGINE_REGISTRY = {
   bing: bingAdapter,
@@ -11,6 +13,8 @@ const ENGINE_REGISTRY = {
   mojeek: mojeekAdapter,
   duckduckgo: duckDuckGoAdapter,
   brave: braveAdapter,
+  qwant: qwantAdapter,
+  yahoo: yahooAdapter,
 };
 
 export function getEngineRegistry() {
@@ -29,29 +33,57 @@ function normalizeEngineList(engines) {
   return String(engines).split(",");
 }
 
-export function resolveEngineOrder(engines) {
-  const requestedEngines = normalizeEngineList(engines);
-  const baseOrder = requestedEngines.length > 0 ? requestedEngines : env.DEFAULT_ENGINES;
+export function normalizeRequestedEngines(engines) {
+  return normalizeEngineList(engines)
+    .map((engine) => String(engine).trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function resolveEngineSelection(engines) {
+  const requestedEngines = normalizeRequestedEngines(engines);
+  const baseOrder =
+    requestedEngines.length > 0
+      ? requestedEngines
+      : normalizeRequestedEngines(env.DEFAULT_ENGINES);
   const supportedEngines = new Set(env.SUPPORTED_ENGINES);
   const seen = new Set();
+  const enabledEngines = [];
+  const skippedEngines = [];
 
-  return baseOrder
-    .map((engine) => String(engine).trim().toLowerCase())
-    .filter((engine) => {
-      if (!engine || seen.has(engine)) {
-        return false;
-      }
+  for (const engine of baseOrder) {
+    if (seen.has(engine)) {
+      continue;
+    }
 
-      const adapter = ENGINE_REGISTRY[engine];
-      if (!adapter || !supportedEngines.has(engine)) {
-        return false;
-      }
+    seen.add(engine);
 
-      if (adapter.isAvailable && !adapter.isAvailable()) {
-        return false;
-      }
+    const adapter = ENGINE_REGISTRY[engine];
+    if (!adapter || !supportedEngines.has(engine)) {
+      skippedEngines.push({
+        engine,
+        reason: "unsupported_engine",
+      });
+      continue;
+    }
 
-      seen.add(engine);
-      return true;
-    });
+    if (adapter.isAvailable && !adapter.isAvailable()) {
+      skippedEngines.push({
+        engine,
+        reason: "unavailable_engine",
+      });
+      continue;
+    }
+
+    enabledEngines.push(engine);
+  }
+
+  return {
+    requestedEngines: baseOrder,
+    enabledEngines,
+    skippedEngines,
+  };
+}
+
+export function resolveEngineOrder(engines) {
+  return resolveEngineSelection(engines).enabledEngines;
 }

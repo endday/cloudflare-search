@@ -7,9 +7,17 @@ function isKvAvailable() {
   return !!env.SEARCH_KV && typeof env.SEARCH_KV.get === "function";
 }
 
-async function getCacheKey({ query, engines, language, time_range, pageno }) {
+async function getCacheKey({
+  query,
+  requested_engines,
+  engines,
+  language,
+  time_range,
+  pageno,
+}) {
   const payload = JSON.stringify({
     query,
+    requested_engines,
     engines,
     language,
     time_range,

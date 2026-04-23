@@ -4,19 +4,37 @@ import { getSearchHtml } from "./utils/getHTML.js";
 import { enforceRateLimit } from "./utils/rateLimit.js";
 import { searchAllWithMeta } from "./utils/searchGateway.js";
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "*",
-  "Access-Control-Max-Age": "86400",
-};
+const ALLOWED_METHODS = "GET, POST, OPTIONS";
 
-function jsonResponse(payload, status = 200, headers = {}) {
-  return new Response(JSON.stringify(payload, null, 2), {
+function buildCorsHeaders(request) {
+  const headers = {
+    "Access-Control-Allow-Methods": ALLOWED_METHODS,
+    "Access-Control-Allow-Headers":
+      request.headers.get("Access-Control-Request-Headers") ||
+      env.CORS_ALLOWED_HEADERS.join(", "),
+    "Access-Control-Max-Age": "86400",
+  };
+  const origin = request.headers.get("Origin");
+
+  if (env.CORS_ALLOWED_ORIGINS.includes("*")) {
+    headers["Access-Control-Allow-Origin"] = "*";
+    return headers;
+  }
+
+  if (origin && env.CORS_ALLOWED_ORIGINS.includes(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers.Vary = "Origin";
+  }
+
+  return headers;
+}
+
+function jsonResponse(request, payload, status = 200, headers = {}) {
+  return new Response(JSON.stringify(payload), {
     status,
     headers: {
       "Content-Type": "application/json",
-      ...CORS_HEADERS,
+      ...buildCorsHeaders(request),
       ...headers,
     },
   });
@@ -145,6 +163,80 @@ function normalizePageNumber(value) {
   return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
 }
 
+function normalizeLocationValue(value) {
+  const normalized = String(value || "").trim();
+
+  return normalized || "auto";
+}
+
+function isLocationDisabled(value) {
+  return ["0", "false", "none", "off", "disable", "disabled"].includes(
+    String(value || "").trim().toLowerCase()
+  );
+}
+
+function getClientLocation(request) {
+  const cf = request.cf || {};
+
+  return {
+    city: String(cf.city || "").trim(),
+    region: String(cf.region || "").trim(),
+    country: String(cf.country || "").trim(),
+    timezone: String(cf.timezone || "").trim(),
+  };
+}
+
+function resolveLocationContext(request, params) {
+  const locationValue = normalizeLocationValue(params.location);
+
+  if (isLocationDisabled(locationValue)) {
+    return {
+      value: "",
+      source: "disabled",
+      mode: locationValue,
+      client: getClientLocation(request),
+    };
+  }
+
+  if (locationValue.toLowerCase() !== "auto") {
+    return {
+      value: locationValue,
+      source: "explicit",
+      mode: "explicit",
+      client: getClientLocation(request),
+    };
+  }
+
+  const client = getClientLocation(request);
+  const value = client.city || client.region;
+
+  return {
+    value,
+    source: value ? "auto" : "unavailable",
+    mode: "auto",
+    client,
+  };
+}
+
+function appendLocationToQuery(query, location) {
+  if (!location) {
+    return query;
+  }
+
+  const normalizedQuery = String(query || "").trim();
+  const normalizedLocation = String(location || "").trim();
+
+  if (
+    normalizedQuery
+      .toLowerCase()
+      .includes(normalizedLocation.toLowerCase())
+  ) {
+    return normalizedQuery;
+  }
+
+  return `${normalizedQuery} ${normalizedLocation}`;
+}
+
 function inferLanguageFromQuery(query, fallbackLanguage) {
   const normalizedQuery = String(query || "");
 
@@ -186,6 +278,7 @@ async function handleAuthVerify(request, params, requestId) {
   }
 
   return jsonResponse(
+    request,
     {
       authorized: true,
       token_required: !!env.TOKEN,
@@ -222,16 +315,28 @@ async function handleSearch(request, params, requestId) {
     });
   }
 
+  const locationContext = resolveLocationContext(request, params);
+  const effectiveQuery = appendLocationToQuery(query, locationContext.value);
+
   const { response, meta } = await searchAllWithMeta({
-    query,
+    query: effectiveQuery,
     engines: normalizeEngineParam(params.engines),
     language: resolveSearchLanguage(params, query),
     time_range: normalizeTimeRange(params.time_range || params.timeRange),
     pageno: normalizePageNumber(params.pageno || params.page),
   });
+  const responsePayload = {
+    ...response,
+    query,
+    effective_query: effectiveQuery,
+    location: locationContext.value || null,
+    location_source: locationContext.source,
+    location_context: locationContext,
+  };
 
   return jsonResponse(
-    response,
+    request,
+    responsePayload,
     200,
     buildSearchResponseHeaders({
       requestId,
@@ -241,80 +346,92 @@ async function handleSearch(request, params, requestId) {
   );
 }
 
+function createErrorResponse(request, requestId, error) {
+  const normalized = normalizeError(error);
+  const status = normalized.status || 500;
+  const headers = {
+    "X-Search-Request-Id": requestId,
+  };
+
+  if (normalized.details?.retry_after) {
+    headers["Retry-After"] = String(normalized.details.retry_after);
+  }
+
+  return jsonResponse(request, toErrorPayload(normalized), status, headers);
+}
+
 async function handleRequest(request) {
+  const requestId = getRequestId(request);
   const url = new URL(request.url);
 
   if (request.method === "OPTIONS") {
-    return new Response(null, { headers: CORS_HEADERS });
+    return new Response(null, {
+      status: 204,
+      headers: {
+        ...buildCorsHeaders(request),
+        "X-Search-Request-Id": requestId,
+      },
+    });
   }
 
   if (request.method !== "GET" && request.method !== "POST") {
-    return new Response("Method Not Allowed", {
-      status: 405,
-      headers: CORS_HEADERS,
-    });
+    return createErrorResponse(
+      request,
+      requestId,
+      new ApiError({
+        status: 405,
+        code: "METHOD_NOT_ALLOWED",
+        category: "request",
+        message: "Method Not Allowed",
+      })
+    );
   }
 
   if (url.pathname === "/") {
     return new Response(getSearchHtml(), {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
-        ...CORS_HEADERS,
+        ...buildCorsHeaders(request),
+        "X-Search-Request-Id": requestId,
       },
     });
   }
 
   if (url.pathname === "/auth/verify") {
-    const requestId = getRequestId(request);
-
     try {
       const params = await parseRequestParams(request, url);
       return await handleAuthVerify(request, params, requestId);
     } catch (error) {
       const normalized = normalizeError(error);
-      const status = normalized.status || 500;
-      const headers = normalized.details?.retry_after
-        ? {
-            "Retry-After": String(normalized.details.retry_after),
-            "X-Search-Request-Id": requestId,
-          }
-        : {
-            "X-Search-Request-Id": requestId,
-          };
       console.error(
         "[handleAuthVerify] Error:",
         normalized.code,
         normalized.message
       );
-      return jsonResponse(toErrorPayload(normalized), status, headers);
+      return createErrorResponse(request, requestId, normalized);
     }
   }
 
   if (url.pathname !== "/search") {
-    return new Response("Not Found", {
-      status: 404,
-      headers: CORS_HEADERS,
-    });
+    return createErrorResponse(
+      request,
+      requestId,
+      new ApiError({
+        status: 404,
+        code: "NOT_FOUND",
+        category: "request",
+        message: "Not Found",
+      })
+    );
   }
-
-  const requestId = getRequestId(request);
 
   try {
     const params = await parseRequestParams(request, url);
     return await handleSearch(request, params, requestId);
   } catch (error) {
     const normalized = normalizeError(error);
-    const status = normalized.status || 500;
-    const headers = normalized.details?.retry_after
-      ? {
-          "Retry-After": String(normalized.details.retry_after),
-          "X-Search-Request-Id": requestId,
-        }
-      : {
-          "X-Search-Request-Id": requestId,
-        };
     console.error("[handleRequest] Error:", normalized.code, normalized.message);
-    return jsonResponse(toErrorPayload(normalized), status, headers);
+    return createErrorResponse(request, requestId, normalized);
   }
 }
 

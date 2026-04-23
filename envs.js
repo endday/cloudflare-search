@@ -5,6 +5,8 @@ const createDefaultEnv = () => ({
     "startpage",
     "duckduckgo",
     "brave",
+    "qwant",
+    "yahoo",
     "mojeek",
     "bing",
   ],
@@ -19,6 +21,8 @@ const createDefaultEnv = () => ({
   HEALTH_FAILURE_THRESHOLD: "2",
   HEALTH_COOLDOWN_SECONDS: "180",
   HEALTH_STATE_TTL_SECONDS: "3600",
+  CORS_ALLOWED_ORIGINS: ["*"],
+  CORS_ALLOWED_HEADERS: ["Authorization", "Content-Type", "x-api-key"],
   TOKEN: null,
   SEARCH_KV: null,
   SEARCH_STATE_KV: null,
@@ -72,5 +76,13 @@ export const setEnv = (newEnv = {}) => {
   env.DEFAULT_ENGINES = normalizeStringArray(
     env.DEFAULT_ENGINES,
     createDefaultEnv().DEFAULT_ENGINES
+  );
+  env.CORS_ALLOWED_ORIGINS = normalizeStringArray(
+    env.CORS_ALLOWED_ORIGINS,
+    createDefaultEnv().CORS_ALLOWED_ORIGINS
+  );
+  env.CORS_ALLOWED_HEADERS = normalizeStringArray(
+    env.CORS_ALLOWED_HEADERS,
+    createDefaultEnv().CORS_ALLOWED_HEADERS
   );
 };

@@ -1,7 +1,7 @@
 import { env } from "../envs.js";
 import { getCachedSearchResponse, setCachedSearchResponse } from "./cache.js";
 import { ApiError, normalizeError } from "./errors.js";
-import { getEngineRegistry, resolveEngineOrder } from "./engineRegistry.js";
+import { getEngineRegistry, resolveEngineSelection } from "./engineRegistry.js";
 import {
   prioritizeHealthyEngines,
   recordEngineFailure,
@@ -27,22 +27,41 @@ function parsePositiveInt(value, fallback) {
   return parsed;
 }
 
-function filterEnginesByCapabilities(engineNames, registry, { time_range, pageno }) {
+function filterEnginesByCapabilities(
+  engineNames,
+  registry,
+  { time_range, pageno }
+) {
   const page = parseNonNegativeInt(pageno, 0);
+  const enabledEngines = [];
+  const skippedEngines = [];
 
-  return engineNames.filter((engineName) => {
+  for (const engineName of engineNames) {
     const supports = registry[engineName]?.supports || {};
 
     if (time_range && supports.time_range === false) {
-      return false;
+      skippedEngines.push({
+        engine: engineName,
+        reason: "unsupported_time_range",
+      });
+      continue;
     }
 
     if (page > 0 && supports.pageno === false) {
-      return false;
+      skippedEngines.push({
+        engine: engineName,
+        reason: "unsupported_pageno",
+      });
+      continue;
     }
 
-    return true;
-  });
+    enabledEngines.push(engineName);
+  }
+
+  return {
+    enabledEngines,
+    skippedEngines,
+  };
 }
 
 function startEngineSearch(adapter, params) {
@@ -75,11 +94,18 @@ function startEngineSearch(adapter, params) {
   };
 }
 
-function buildSearchResponse({ query, enabledEngines, unresponsiveEngines, results }) {
+function buildSearchResponse({
+  query,
+  enabledEngines,
+  skippedEngines,
+  unresponsiveEngines,
+  results,
+}) {
   return {
     query,
     number_of_results: results.length,
     enabled_engines: enabledEngines,
+    skipped_engines: skippedEngines,
     unresponsive_engines: [...new Set(unresponsiveEngines)],
     results,
   };
@@ -255,11 +281,20 @@ export async function searchAllWithMeta({
   pageno,
 }) {
   const registry = getEngineRegistry();
-  const requestedEngines = resolveEngineOrder(engines);
-  const enabledEngines = filterEnginesByCapabilities(requestedEngines, registry, {
-    time_range,
-    pageno,
-  });
+  const engineSelection = resolveEngineSelection(engines);
+  const capabilitySelection = filterEnginesByCapabilities(
+    engineSelection.enabledEngines,
+    registry,
+    {
+      time_range,
+      pageno,
+    }
+  );
+  const enabledEngines = capabilitySelection.enabledEngines;
+  const skippedEngines = [
+    ...engineSelection.skippedEngines,
+    ...capabilitySelection.skippedEngines,
+  ];
 
   if (enabledEngines.length === 0) {
     throw new ApiError({
@@ -272,6 +307,7 @@ export async function searchAllWithMeta({
 
   const cacheParams = {
     query,
+    requested_engines: engineSelection.requestedEngines,
     engines: enabledEngines,
     language,
     time_range,
@@ -320,6 +356,7 @@ export async function searchAllWithMeta({
   const response = buildSearchResponse({
     query,
     enabledEngines,
+    skippedEngines,
     unresponsiveEngines: searchOutcome.unresponsiveEngines,
     results: searchOutcome.results,
   });

@@ -20,7 +20,7 @@ English | [中文](./README.zh.md)
 - ⏱️ **Timeout Control** - Configurable request timeout to avoid long waits
 - 🪂 **Hedged Fallback** - Trigger the next fallback early when the primary engine is slow
 - 🔒 **Token Authentication** - Supports token auth to protect the service from abuse
-- 🌍 **CORS Support** - Full cross-origin resource sharing support
+- 🌍 **CORS Support** - Configurable cross-origin resource sharing support
 - 🎨 **Web Interface** - Provides a clean search UI for easy testing
 - ⚡ **Zero-cost Operation** - Cloudflare Workers free tier supports 100,000 requests per day
 
@@ -147,8 +147,9 @@ curl "https://$YOUR-DOMAIN/search?q=cloudflare"
 # Specify search engines
 curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=startpage,duckduckgo"
 
-# Use token authentication (if TOKEN env var is configured)
-curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
+# Use token authentication (recommended: Authorization header)
+curl "https://$YOUR-DOMAIN/search?q=cloudflare" \
+	-H "Authorization: Bearer $YOUR-TOKEN"
 ```
 
 ### Method 3: API Request (POST)
@@ -159,7 +160,7 @@ Submit search by POST form:
 curl -X POST "https://$YOUR-DOMAIN/search" \
 	-d "q=cloudflare" \
 	-d "engines=startpage,duckduckgo" \
-	-d "token=$YOUR-TOKEN" # if TOKEN env var is configured
+	-H "Authorization: Bearer $YOUR-TOKEN" # if TOKEN env var is configured
 ```
 
 ## API Reference
@@ -175,9 +176,12 @@ Used to execute search queries and return aggregated results.
 | `q` / `query` | `string` | yes      | Search keyword                                             | `cloudflare`     |
 | `engines`     | `string` | no       | Specify search engines, separated by commas               | `startpage,duckduckgo` |
 | `language`    | `string` | no       | Language/region hint passed to supported engines          | `en`, `zh-CN`    |
+| `location`    | `string` | no       | Location hint. Defaults to `auto`, using Cloudflare `request.cf.city` / `region`; use `off` to disable | `auto`, `Shanghai`, `off` |
 | `time_range`  | `string` | no       | Time filter: `day`, `week`, `month`, or `year`            | `month`          |
 | `pageno`      | `number` | no       | Zero-based page number                                    | `0`              |
-| `token`       | `string` | no/yes   | Access token (required when `TOKEN` env var is configured) | `$YOUR-TOKEN`    |
+| `token`       | `string` | no/yes   | Access token compatibility parameter; prefer `Authorization: Bearer ...` | `$YOUR-TOKEN`    |
+
+By default, `location=auto` is enabled. When Cloudflare provides a city or region in `request.cf`, the Worker appends it to the actual upstream query and returns both `query` and `effective_query` for transparency. In MCP/proxy scenarios this reflects the caller/proxy IP location; use `location=off` to disable it.
 
 **Supported Search Engines**:
 
@@ -186,14 +190,23 @@ Used to execute search queries and return aggregated results.
 - `mojeek` - Mojeek Search
 - `duckduckgo` - DuckDuckGo Search
 - `brave` - Brave Search
+- `qwant` - Qwant Lite Search
+- `yahoo` - Yahoo Search
 
 #### Response Value
 
 ```typescript
 {
 	query: string;                    // Search keyword
+	effective_query: string;          // Actual upstream query after location enrichment
+	location: string | null;          // Resolved location, if any
+	location_source: string;          // auto / explicit / disabled / unavailable
 	number_of_results: number;        // Total number of results
 	enabled_engines: string[];        // Enabled search engine list
+	skipped_engines: Array<{          // Requested engines skipped before search
+		engine: string;
+		reason: string;
+	}>;
 	unresponsive_engines: string[];   // Unresponsive search engine list
 	results: Array<{
 		title: string;                  // Result title
@@ -210,10 +223,17 @@ Used to execute search queries and return aggregated results.
 # GET request
 curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=startpage,duckduckgo"
 
+# Default location=auto uses Cloudflare request.cf location when available
+curl "https://$YOUR-DOMAIN/search?q=tomorrow%20weather"
+
+# Override or disable location enrichment
+curl "https://$YOUR-DOMAIN/search?q=tomorrow%20weather&location=Hong%20Kong"
+curl "https://$YOUR-DOMAIN/search?q=cloudflare&location=off"
+
 # JSON POST request
 curl -X POST "https://$YOUR-DOMAIN/search" \
 	-H "Content-Type: application/json" \
-	-d '{"q":"cloudflare","engines":["startpage","duckduckgo"],"language":"en","time_range":"month"}'
+	-d '{"q":"cloudflare","engines":["startpage","duckduckgo"],"language":"en","location":"off","time_range":"month"}'
 
 # Form POST request
 curl -X POST "https://$YOUR-DOMAIN/search" \
@@ -226,8 +246,12 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 ```json
 {
 	"query": "cloudflare",
+	"effective_query": "cloudflare San Francisco",
+	"location": "San Francisco",
+	"location_source": "auto",
 	"number_of_results": 15,
 	"enabled_engines": ["startpage", "duckduckgo", "brave", "mojeek", "bing"],
+	"skipped_engines": [],
 	"unresponsive_engines": [],
 	"results": [
 		{
@@ -257,6 +281,8 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 | **Brave**      | HTML result parser, no `eval` | -                               | Fallback 2    |
 | **Mojeek**     | Simple HTML parser            | -                               | Fallback 3    |
 | **Bing**       | HTML / RSS search parser      | -                               | Fallback 4    |
+| **Qwant**      | Qwant Lite HTML parser        | -                               | Optional      |
+| **Yahoo**      | HTML search parser            | -                               | Optional      |
 
 ### Basic Working Approach
 
@@ -285,6 +311,8 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 | `HEALTH_FAILURE_THRESHOLD` | `string` | `"2"` | Failures before temporary engine cooldown |
 | `HEALTH_COOLDOWN_SECONDS` | `string` | `"180"` | Engine cooldown duration |
 | `HEALTH_STATE_TTL_SECONDS` | `string` | `"3600"` | Retention time for engine health state in KV |
+| `CORS_ALLOWED_ORIGINS` | `string`/`array` | `*` | Allowed browser origins; set specific origins to restrict CORS |
+| `CORS_ALLOWED_HEADERS` | `string`/`array` | `Authorization,Content-Type,x-api-key` | Allowed CORS request headers |
 | `TOKEN` | `string` | `null` | Access token. Enables auth when configured to prevent abuse |
 
 **Notes**:
@@ -309,6 +337,7 @@ CACHE_TTL_SECONDS = "300"
 STALE_CACHE_TTL_SECONDS = "1800"
 RATE_LIMIT_MAX_REQUESTS = "60"
 HEALTH_STATE_TTL_SECONDS = "3600"
+CORS_ALLOWED_ORIGINS = "https://app.example.com"
 TOKEN = "your-secret-token-here"
 
 [[kv_namespaces]]
@@ -412,15 +441,19 @@ With MCP (Model Context Protocol), AI assistants can directly call your search s
 2. Pass token in requests:
 
 ```bash
-# Access homepage
-https://$YOUR-DOMAIN?token=$YOUR-TOKEN
+# Homepage
+# Open the page and paste the token into the built-in input box
 
-# Request API with token parameter in query/body
-curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
+# Preferred: Authorization header
+curl "https://$YOUR-DOMAIN/search?q=cloudflare" \
+	-H "Authorization: Bearer $YOUR-TOKEN"
 
 curl -X POST "https://$YOUR-DOMAIN/search" \
 	-d "q=cloudflare" \
-	-d "token=$YOUR-TOKEN"
+	-H "Authorization: Bearer $YOUR-TOKEN"
+
+# Backward-compatible query/body token is still supported
+curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
 ```
 
 ## FAQ
@@ -433,7 +466,7 @@ A: Possible reasons:
 - No relevant results for the search keyword
 - Search engine has rate-limited access
 
-You can check the `unresponsive_engines` field in the response to see which engines did not respond.
+You can check `skipped_engines` and `unresponsive_engines` in the response to see which engines were filtered out or failed to respond.
 
 ### Q: How can I improve search speed?
 

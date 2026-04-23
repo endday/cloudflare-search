@@ -1,7 +1,12 @@
 import { ApiError } from "./errors.js";
 import {
+  fetchSearchText,
+  isChallengeResponse,
+  throwBlockedUpstreamError,
+} from "./engineRequest.js";
+import {
   ensureAbsoluteUrl,
-  fetchText,
+  mapLanguage,
   mapTimeRange,
 } from "./engineUtils.js";
 import { cleanText, parseHtml } from "./html.js";
@@ -14,7 +19,51 @@ const BRAVE_TIME_RANGE = {
   year: "py",
 };
 
+const BRAVE_LANGUAGE = {
+  en: "en-us",
+  "en-us": "en-us",
+  "en-gb": "en-gb",
+  zh: "zh-hans",
+  "zh-cn": "zh-hans",
+  "zh-tw": "zh-hant",
+};
+
+const BRAVE_COUNTRY = {
+  en: "us",
+  "en-us": "us",
+  "en-gb": "gb",
+  zh: "cn",
+  "zh-cn": "cn",
+  "zh-tw": "tw",
+};
+
+const BRAVE_CHALLENGE_PATTERNS = [
+  /name=["']captcha["']/i,
+  /id=["'][^"']*captcha[^"']*["']/i,
+];
+
+function isBraveChallengeResponse(source) {
+  const text = String(source || "");
+
+  return (
+    isChallengeResponse(text, BRAVE_CHALLENGE_PATTERNS) ||
+    ((/verify you are human/i.test(text) || /unusual traffic/i.test(text)) &&
+      /<form\b/i.test(text))
+  );
+}
+
+function throwBraveChallengeError() {
+  throwBlockedUpstreamError({
+    engine: "Brave",
+    surface: "html",
+  });
+}
+
 export function parseBraveResults(html) {
+  if (isBraveChallengeResponse(html)) {
+    throwBraveChallengeError();
+  }
+
   const root = parseHtml(html);
   const resultNodes = root
     .querySelectorAll(".snippet")
@@ -71,10 +120,22 @@ async function searchBrave(params) {
     searchUrl.searchParams.set("tf", timeFilter);
   }
 
-  const html = await fetchText(searchUrl.toString(), {
+  const html = await fetchSearchText(searchUrl.toString(), {
+    engine: "brave",
+    engineLabel: "Brave",
     signal,
     language,
-    referrer: "https://search.brave.com/search?source=web",
+    cookies: {
+      country: mapLanguage(language, BRAVE_COUNTRY, "us"),
+      ui_lang: mapLanguage(language, BRAVE_LANGUAGE, "en-us"),
+      useLocation: "0",
+      summarizer: "0",
+      safesearch: "off",
+    },
+    referrer: "https://search.brave.com/",
+    blockedStatuses: [403, 429],
+    isBlocked: isBraveChallengeResponse,
+    blockedSurface: "html",
   });
 
   return parseBraveResults(html);

@@ -30,6 +30,14 @@ if (!CF_SEARCH_URL) {
   process.exit(1);
 }
 
+function getSearchEndpoint() {
+  const baseUrl = CF_SEARCH_URL.endsWith("/")
+    ? CF_SEARCH_URL
+    : `${CF_SEARCH_URL}/`;
+
+  return new URL("search", baseUrl);
+}
+
 /**
  * Call the Cloudflare Search API
  */
@@ -45,6 +53,10 @@ async function searchAPI(query, engines = null, options = {}) {
       params.append("language", options.language);
     }
 
+    if (options.location) {
+      params.append("location", options.location);
+    }
+
     if (options.time_range) {
       params.append("time_range", options.time_range);
     }
@@ -53,13 +65,16 @@ async function searchAPI(query, engines = null, options = {}) {
       params.append("pageno", String(options.pageno));
     }
 
+    const headers = {};
     if (CF_SEARCH_TOKEN) {
-      params.append("token", CF_SEARCH_TOKEN);
+      headers.Authorization = `Bearer ${CF_SEARCH_TOKEN}`;
     }
 
-    const url = `${CF_SEARCH_URL}/search?${params.toString()}`;
-
-    const response = await fetch(url);
+    const url = getSearchEndpoint();
+    url.search = params.toString();
+    const response = await fetch(url, {
+      headers,
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -104,15 +119,22 @@ const SEARCH_INPUT_SCHEMA = {
           "mojeek",
           "duckduckgo",
           "brave",
+          "qwant",
+          "yahoo",
         ],
       },
       description:
         "Optional: Array of search engines to use. If not specified, uses default engines. " +
-        "Available engines: bing, startpage, mojeek, duckduckgo, brave",
+        "Available engines: bing, startpage, mojeek, duckduckgo, brave, qwant, yahoo",
     },
     language: {
       type: "string",
       description: "Optional language/region hint, for example en or zh-CN",
+    },
+    location: {
+      type: "string",
+      description:
+        "Optional location hint. Defaults to auto on the Worker. Use off to disable location enrichment.",
     },
     time_range: {
       type: "string",
@@ -138,7 +160,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "web_search",
         description:
           "Search the web for current information, news, or any topic. " +
-          "Uses Bing first, then falls back to Startpage, Mojeek, DuckDuckGo, and Brave " +
+          "Uses the configured fallback order across Startpage, DuckDuckGo, Brave, Mojeek, Bing, Qwant, and Yahoo " +
           "when results are insufficient. Returns deduplicated source URLs. " +
           "Use this when you need real-time information not in your training data. ",
         inputSchema: SEARCH_INPUT_SCHEMA,
@@ -169,7 +191,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     throw new Error("Missing arguments");
   }
 
-  const { query, engines, language, time_range, pageno } =
+  const { query, engines, language, location, time_range, pageno } =
     request.params.arguments;
 
   if (!query || typeof query !== "string") {
@@ -179,6 +201,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     const result = await searchAPI(query, engines, {
       language,
+      location,
       time_range,
       pageno,
     });
@@ -192,6 +215,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     const summary = [
       `Search Query: "${result.query}"`,
+      result.effective_query && result.effective_query !== result.query
+        ? `Effective Query: "${result.effective_query}"`
+        : null,
+      result.location
+        ? `Location: ${result.location} (${result.location_source})`
+        : null,
       `Total Results: ${result.number_of_results}`,
       `Engines Used: ${result.enabled_engines.join(", ")}`,
       result.unresponsive_engines.length > 0

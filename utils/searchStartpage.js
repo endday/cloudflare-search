@@ -1,6 +1,10 @@
 import { ApiError } from "./errors.js";
 import {
-  fetchText,
+  fetchSearchText,
+  isChallengeResponse,
+  throwBlockedUpstreamError,
+} from "./engineRequest.js";
+import {
   mapLanguage,
   resolvePageNumber,
 } from "./engineUtils.js";
@@ -13,6 +17,100 @@ const STARTPAGE_LANGUAGE = {
   "zh-cn": "chinese_simplified",
   "zh-tw": "chinese_traditional",
 };
+
+const STARTPAGE_CHALLENGE_PATTERNS = [
+  /\/sp\/captcha\b/i,
+  /name=["']captcha["']/i,
+];
+const STARTPAGE_SC_TTL_MS = 15 * 60 * 1000;
+let cachedStartpageSc = {
+  value: "",
+  expiresAt: 0,
+};
+
+function isStartpageChallengeResponse(source) {
+  const text = String(source || "");
+
+  return (
+    isChallengeResponse(text, STARTPAGE_CHALLENGE_PATTERNS) ||
+    ((/verify you are human/i.test(text) || /unusual traffic/i.test(text)) &&
+      /<form\b/i.test(text))
+  );
+}
+
+function throwStartpageChallengeError(surface) {
+  throwBlockedUpstreamError({
+    engine: "Startpage",
+    surface,
+  });
+}
+
+function extractStartpageScToken(html) {
+  const match =
+    html.match(/<input\b[^>]*name=["']sc["'][^>]*value=["']([^"']+)["'][^>]*>/i) ||
+    html.match(/<input\b[^>]*value=["']([^"']+)["'][^>]*name=["']sc["'][^>]*>/i);
+
+  return match?.[1]?.trim() || "";
+}
+
+function buildStartpagePreferences(languageValue) {
+  const preferences = [
+    ["disable_family_filter", "1"],
+    ["enable_post_method", "1"],
+    ["instant_answers", "0"],
+    ["num_of_results", "10"],
+  ];
+
+  if (languageValue) {
+    preferences.push(
+      ["lang_homepage", languageValue],
+      ["language", languageValue],
+      ["lui", languageValue]
+    );
+  }
+
+  return encodeURIComponent(
+    preferences.map(([key, value]) => `${key}EEE${value}`).join("N1N")
+  );
+}
+
+async function fetchStartpageScToken({ signal, language }) {
+  if (cachedStartpageSc.value && cachedStartpageSc.expiresAt > Date.now()) {
+    return cachedStartpageSc.value;
+  }
+
+  try {
+    const html = await fetchSearchText("https://www.startpage.com/", {
+      engine: "startpage",
+      engineLabel: "Startpage",
+      signal,
+      language,
+      referrer: "https://www.startpage.com/",
+      blockedStatuses: [403, 429],
+      isBlocked: isStartpageChallengeResponse,
+      blockedSurface: "home",
+    });
+    const token = extractStartpageScToken(html);
+
+    if (token) {
+      cachedStartpageSc = {
+        value: token,
+        expiresAt: Date.now() + STARTPAGE_SC_TTL_MS,
+      };
+    }
+
+    return token;
+  } catch (_) {
+    return "";
+  }
+}
+
+export function resetStartpageRequestState() {
+  cachedStartpageSc = {
+    value: "",
+    expiresAt: 0,
+  };
+}
 
 function extractStartpageResultArray(html) {
   const markerIndex = [
@@ -43,6 +141,10 @@ function extractStartpageResultArray(html) {
 }
 
 export function parseStartpageResults(html) {
+  if (isStartpageChallengeResponse(html)) {
+    throwStartpageChallengeError("html");
+  }
+
   const items = extractStartpageResultArray(html);
 
   if (!Array.isArray(items)) {
@@ -77,26 +179,36 @@ async function searchStartpage(params) {
     });
   }
 
-  const searchUrl = new URL("https://www.startpage.com/sp/search");
-  searchUrl.searchParams.set("query", query);
-  searchUrl.searchParams.set("cat", "web");
-  searchUrl.searchParams.set("segment", "startpage.udog");
-
   const page = resolvePageNumber(pageno);
-  if (page > 0) {
-    searchUrl.searchParams.set("page", String(page + 1));
-  }
-
   const languageValue = mapLanguage(language, STARTPAGE_LANGUAGE, "");
-  if (languageValue) {
-    searchUrl.searchParams.set("language", languageValue);
-    searchUrl.searchParams.set("lui", languageValue);
-  }
-
-  const html = await fetchText(searchUrl.toString(), {
+  const sc = await fetchStartpageScToken({ signal, language });
+  const html = await fetchSearchText("https://www.startpage.com/sp/search", {
+    engine: "startpage",
+    engineLabel: "Startpage",
     signal,
     language,
+    method: "POST",
+    form: {
+      query,
+      cat: "web",
+      segment: "startpage.udog",
+      ...(page > 0 ? { page: String(page + 1) } : {}),
+      ...(languageValue
+        ? {
+            language: languageValue,
+            lui: languageValue,
+          }
+        : {}),
+      ...(sc ? { sc } : {}),
+    },
+    cookies: {
+      preferences: buildStartpagePreferences(languageValue),
+    },
     referrer: "https://www.startpage.com/",
+    origin: "https://www.startpage.com",
+    blockedStatuses: [403, 429],
+    isBlocked: isStartpageChallengeResponse,
+    blockedSurface: "html",
   });
 
   return parseStartpageResults(html);

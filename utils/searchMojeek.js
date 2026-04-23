@@ -1,9 +1,40 @@
 import { ApiError } from "./errors.js";
-import { fetchText, resolvePageNumber } from "./engineUtils.js";
+import {
+  fetchSearchText,
+  isChallengeResponse,
+  throwBlockedUpstreamError,
+} from "./engineRequest.js";
+import { resolvePageNumber } from "./engineUtils.js";
 import { cleanText, parseHtml } from "./html.js";
 import { normalizeResults } from "./index.js";
 
+const MOJEEK_CHALLENGE_PATTERNS = [
+  /name=["']captcha["']/i,
+  /id=["'][^"']*captcha[^"']*["']/i,
+];
+
+function isMojeekChallengeResponse(source) {
+  const text = String(source || "");
+
+  return (
+    isChallengeResponse(text, MOJEEK_CHALLENGE_PATTERNS) ||
+    ((/verify you are human/i.test(text) || /unusual traffic/i.test(text)) &&
+      /<form\b/i.test(text))
+  );
+}
+
+function throwMojeekChallengeError() {
+  throwBlockedUpstreamError({
+    engine: "Mojeek",
+    surface: "html",
+  });
+}
+
 export function parseMojeekResults(html) {
+  if (isMojeekChallengeResponse(html)) {
+    throwMojeekChallengeError();
+  }
+
   const root = parseHtml(html);
   const resultNodes = root.querySelectorAll("ul.results-standard li");
   const results = [];
@@ -48,10 +79,15 @@ async function searchMojeek(params) {
     searchUrl.searchParams.set("s", String(page * 10 + 1));
   }
 
-  const html = await fetchText(searchUrl.toString(), {
+  const html = await fetchSearchText(searchUrl.toString(), {
+    engine: "mojeek",
+    engineLabel: "Mojeek",
     signal,
     language,
     referrer: "https://www.mojeek.com/",
+    blockedStatuses: [403, 429],
+    isBlocked: isMojeekChallengeResponse,
+    blockedSurface: "html",
   });
 
   return parseMojeekResults(html);

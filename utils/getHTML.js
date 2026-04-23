@@ -207,6 +207,22 @@ export function getSearchHtml() {
                     </div>
 
                     <div>
+                      <label for="locationInput" class="block text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-2">
+                        位置增强
+                      </label>
+                      <input
+                        type="text"
+                        id="locationInput"
+                        value="auto"
+                        placeholder="auto / 上海 / off"
+                        class="w-full rounded-md bg-white px-4 py-2 text-sm text-zinc-900 shadow-sm ring-1 ring-inset ring-zinc-300 placeholder:text-zinc-400 focus:ring-2 focus:ring-blue-500 dark:bg-zinc-800 dark:text-zinc-100 dark:ring-zinc-700 dark:placeholder:text-zinc-500"
+                      >
+                      <p class="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                        默认 <code>auto</code>，会使用 Cloudflare 提供的访问者城市/地区；传 <code>off</code> 可关闭。
+                      </p>
+                    </div>
+
+                    <div>
                       <label class="block text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-2">
                         选择搜索引擎 (可多选)
                       </label>
@@ -228,6 +244,18 @@ export function getSearchHtml() {
                             "brave"
                           )} class="rounded text-blue-500 focus:ring-blue-500">
                           <span class="text-sm text-zinc-700 dark:text-zinc-300">Brave</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                          <input type="checkbox" name="engine" value="qwant" ${handlerEngineDefaultChecked(
+                            "qwant"
+                          )} class="rounded text-blue-500 focus:ring-blue-500">
+                          <span class="text-sm text-zinc-700 dark:text-zinc-300">Qwant</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer">
+                          <input type="checkbox" name="engine" value="yahoo" ${handlerEngineDefaultChecked(
+                            "yahoo"
+                          )} class="rounded text-blue-500 focus:ring-blue-500">
+                          <span class="text-sm text-zinc-700 dark:text-zinc-300">Yahoo</span>
                         </label>
                         <label class="flex items-center space-x-2 cursor-pointer">
                           <input type="checkbox" name="engine" value="mojeek" ${handlerEngineDefaultChecked(
@@ -314,6 +342,7 @@ export function getSearchHtml() {
                         <li><code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">q</code> / <code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">query</code> - 搜索关键词 (必填)</li>
                         <li><code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">engines</code> - 指定搜索引擎,多个用逗号分隔 (可选)</li>
                         <li><code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">language</code> - 语言/区域，如 <code>en</code>、<code>zh-CN</code> (可选)</li>
+                        <li><code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">location</code> - 位置增强，默认 <code>auto</code>；传 <code>off</code> 可关闭 (可选)</li>
                         <li><code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">time_range</code> - <code>day</code>、<code>week</code>、<code>month</code>、<code>year</code> (可选)</li>
                         <li><code class="px-1 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded text-zinc-900 dark:text-zinc-100">pageno</code> - 从 0 开始的页码 (可选)</li>
                         ${
@@ -330,6 +359,9 @@ export function getSearchHtml() {
                       <div class="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-800/50">
                         <pre class="text-xs overflow-x-auto"><code>{
   "query": "cloudflare",              // 搜索关键词
+  "effective_query": "cloudflare 上海", // 实际发给上游的搜索词
+  "location": "上海",                 // 生效的位置
+  "location_source": "auto",         // auto / explicit / disabled / unavailable
   "number_of_results": 15,            // 结果总数
   "enabled_engines": ["startpage", ...], // 启用的搜索引擎列表
   "unresponsive_engines": [],         // 无响应的搜索引擎列表
@@ -587,6 +619,7 @@ export function getSearchHtml() {
     const tokenStorageKey = 'cloudflare-search-token';
     const urlParams = new URLSearchParams(window.location.search);
     const tokenInput = document.getElementById('tokenInput');
+    const locationInput = document.getElementById('locationInput');
     const verifyTokenBtn = document.getElementById('verifyTokenBtn');
     const tokenStatusBadge = document.getElementById('tokenStatusBadge');
     const tokenStatusText = document.getElementById('tokenStatusText');
@@ -595,6 +628,10 @@ export function getSearchHtml() {
 
     if (tokenInput) {
       tokenInput.value = initialToken;
+    }
+
+    if (locationInput) {
+      locationInput.value = urlParams.get('location') || 'auto';
     }
 
     function getCurrentToken() {
@@ -647,12 +684,15 @@ export function getSearchHtml() {
     function updateExamples() {
       const token = getCurrentToken();
       const exampleToken = token || 'YOUR_TOKEN';
+      const location = locationInput ? locationInput.value.trim() : '';
+      const locationSuffix = location ? '&location=' + encodeURIComponent(location) : '';
+      const postLocation = location ? '&location=' + location : '';
       const getExample = TOKEN_ENABLED
-        ? \`curl -H "Authorization: Bearer \${exampleToken}" "\${currentOrigin}/search?q=cloudflare"\`
-        : currentOrigin + '/search?q=cloudflare';
+        ? \`curl -H "Authorization: Bearer \${exampleToken}" "\${currentOrigin}/search?q=cloudflare\${locationSuffix}"\`
+        : currentOrigin + \`/search?q=cloudflare\${locationSuffix}\`;
       const postExample = TOKEN_ENABLED
-        ? \`curl -X POST "\${currentOrigin}/search" \\\\\n  -H "Authorization: Bearer \${exampleToken}" \\\\\n  -d "q=cloudflare&engines=startpage,duckduckgo"\`
-        : \`curl -X POST "\${currentOrigin}/search" -d "q=cloudflare&engines=startpage,duckduckgo"\`;
+        ? \`curl -X POST "\${currentOrigin}/search" \\\\\n  -H "Authorization: Bearer \${exampleToken}" \\\\\n  -d "q=cloudflare&engines=startpage,duckduckgo\${postLocation}"\`
+        : \`curl -X POST "\${currentOrigin}/search" -d "q=cloudflare&engines=startpage,duckduckgo\${postLocation}"\`;
       const mcpEnv = [
         \`        "CF_SEARCH_URL": "\${currentOrigin}"\`,
         ...(TOKEN_ENABLED ? [\`        "CF_SEARCH_TOKEN": "\${exampleToken}"\`] : []),
@@ -703,6 +743,10 @@ export function getSearchHtml() {
     }
 
     updateExamples();
+
+    if (locationInput) {
+      locationInput.addEventListener('input', updateExamples);
+    }
 
     if (TOKEN_ENABLED && tokenInput) {
       setTokenBadge('idle', '未验证');
@@ -767,6 +811,7 @@ export function getSearchHtml() {
       const engines = Array.from(document.querySelectorAll('input[name="engine"]:checked:not(:disabled)'))
         .map(cb => cb.value)
         .join(',');
+      const location = locationInput ? locationInput.value.trim() : '';
 
       // 显示加载状态
       const searchBtn = document.getElementById('searchBtn');
@@ -778,6 +823,7 @@ export function getSearchHtml() {
       try {
         let url = \`\${currentOrigin}/search?q=\${encodeURIComponent(query)}\`;
         if (engines) url += \`&engines=\${engines}\`;
+        if (location) url += \`&location=\${encodeURIComponent(location)}\`;
 
         const response = await fetch(url, {
           headers: getAuthHeaders(),

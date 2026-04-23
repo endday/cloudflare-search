@@ -5,10 +5,23 @@ type ResultItem = {
 };
 
 type TimeRange = "day" | "week" | "month" | "year";
+type SkippedEngineReason =
+  | "unsupported_engine"
+  | "unavailable_engine"
+  | "unsupported_time_range"
+  | "unsupported_pageno";
+
+type SkippedEngine = {
+  engine: string;
+  reason: SkippedEngineReason;
+};
+
+type LocationSource = "auto" | "explicit" | "disabled" | "unavailable";
 
 export type subSearch = (params: {
   query: string;
   language?: string;
+  location?: string;
   time_range?: TimeRange;
   pageno?: number;
   signal?: AbortSignal;
@@ -18,12 +31,28 @@ export type searchAll = (params: {
   query: string;
   engines?: string[];
   language?: string;
+  location?: string;
   time_range?: TimeRange;
   pageno?: number;
 }) => Promise<{
   query: string;
+  effective_query?: string;
+  location?: string | null;
+  location_source?: LocationSource;
+  location_context?: {
+    value: string;
+    source: LocationSource;
+    mode: string;
+    client: {
+      city: string;
+      region: string;
+      country: string;
+      timezone: string;
+    };
+  };
   number_of_results: number;
   enabled_engines: string[];
+  skipped_engines: SkippedEngine[];
   unresponsive_engines: string[];
   results: Array<ResultItem & { engine: string }>;
 }>;
@@ -32,6 +61,7 @@ export type searchAllWithMeta = (params: {
   query: string;
   engines?: string[];
   language?: string;
+  location?: string;
   time_range?: TimeRange;
   pageno?: number;
 }) => Promise<{
@@ -64,6 +94,8 @@ export interface Env {
   HEALTH_FAILURE_THRESHOLD?: string;
   HEALTH_COOLDOWN_SECONDS?: string;
   HEALTH_STATE_TTL_SECONDS?: string;
+  CORS_ALLOWED_ORIGINS?: string[] | string;
+  CORS_ALLOWED_HEADERS?: string[] | string;
   TOKEN?: string;
   SEARCH_KV?: unknown;
   SEARCH_STATE_KV?: unknown;

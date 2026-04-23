@@ -1,7 +1,11 @@
 import { ApiError } from "./errors.js";
 import {
+  fetchSearchText,
+  isChallengeResponse,
+  throwBlockedUpstreamError,
+} from "./engineRequest.js";
+import {
   ensureAbsoluteUrl,
-  fetchText,
   mapLanguage,
   mapTimeRange,
   resolvePageNumber,
@@ -25,6 +29,28 @@ const DUCKDUCKGO_TIME_RANGE = {
   year: "y",
 };
 
+const DUCKDUCKGO_CHALLENGE_PATTERNS = [
+  /anomaly\.js/i,
+  /bots use DuckDuckGo too/i,
+  /automated requests/i,
+];
+
+function isDuckDuckGoChallengeResponse(source) {
+  const text = String(source || "");
+
+  return (
+    isChallengeResponse(text, DUCKDUCKGO_CHALLENGE_PATTERNS) ||
+    (/verify you are human/i.test(text) && /<form\b/i.test(text))
+  );
+}
+
+function throwDuckDuckGoChallengeError() {
+  throwBlockedUpstreamError({
+    engine: "DuckDuckGo",
+    surface: "html",
+  });
+}
+
 function extractDuckDuckGoUrl(rawUrl) {
   const absoluteUrl = ensureAbsoluteUrl(rawUrl, "https://duckduckgo.com");
 
@@ -38,6 +64,10 @@ function extractDuckDuckGoUrl(rawUrl) {
 }
 
 export function parseDuckDuckGoResults(html) {
+  if (isDuckDuckGoChallengeResponse(html)) {
+    throwDuckDuckGoChallengeError();
+  }
+
   const root = parseHtml(html);
   const resultNodes = root.querySelectorAll(".result");
   const results = [];
@@ -75,6 +105,7 @@ export function parseDuckDuckGoResults(html) {
 async function searchDuckDuckGo(params) {
   const { query, language, time_range, pageno, signal } = params;
   const page = resolvePageNumber(pageno);
+  const locale = mapLanguage(language, DUCKDUCKGO_LANGUAGE, "wt-wt");
 
   if (page > 0) {
     throw new ApiError({
@@ -85,24 +116,27 @@ async function searchDuckDuckGo(params) {
     });
   }
 
-  const searchUrl = new URL("https://html.duckduckgo.com/html/");
-  searchUrl.searchParams.set("q", query);
-  searchUrl.searchParams.set(
-    "kl",
-    mapLanguage(language, DUCKDUCKGO_LANGUAGE, "wt-wt")
-  );
-
   const timeFilter = mapTimeRange(time_range, DUCKDUCKGO_TIME_RANGE);
-  if (timeFilter) {
-    searchUrl.searchParams.set("df", timeFilter);
-  }
-
-  const html = await fetchText(searchUrl.toString(), {
+  const html = await fetchSearchText("https://html.duckduckgo.com/html/", {
+    engine: "duckduckgo",
+    engineLabel: "DuckDuckGo",
     signal,
     language,
-    headers: {
-      Referer: "https://duckduckgo.com/",
+    method: "POST",
+    form: {
+      q: query,
+      kl: locale,
+      ...(timeFilter ? { df: timeFilter } : {}),
     },
+    cookies: {
+      kl: locale,
+      ...(timeFilter ? { df: timeFilter } : {}),
+    },
+    referrer: "https://html.duckduckgo.com/",
+    origin: "https://html.duckduckgo.com",
+    blockedStatuses: [403, 429],
+    isBlocked: isDuckDuckGoChallengeResponse,
+    blockedSurface: "html",
   });
 
   return parseDuckDuckGoResults(html);

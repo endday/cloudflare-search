@@ -20,7 +20,7 @@
 - ⏱️ **超时控制** - 可配置请求超时时间，避免长时间等待
 - 🪂 **Hedged Fallback** - 当前引擎过慢时提前触发 fallback，降低尾延迟
 - 🔒 **Token 鉴权** - 支持 Token 认证，保护服务不被滥用
-- 🌍 **CORS 支持** - 完整的跨域资源共享支持
+- 🌍 **CORS 支持** - 可配置的跨域资源共享支持
 - 🎨 **Web 界面** - 提供简洁的搜索界面，方便测试
 - ⚡ **零成本运行** - Cloudflare Workers 免费版每天 10 万次请求
 
@@ -149,8 +149,9 @@ curl "https://$YOUR-DOMAIN/search?q=cloudflare"
 # 指定搜索引擎
 curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=startpage,duckduckgo"
 
-# 使用 token 鉴权（如果配置了 TOKEN 环境变量）
-curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
+# 使用 token 鉴权（推荐使用 Authorization 头）
+curl "https://$YOUR-DOMAIN/search?q=cloudflare" \
+  -H "Authorization: Bearer $YOUR-TOKEN"
 ```
 
 ### 方式 3: API 请求（POST）
@@ -161,7 +162,7 @@ curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
 curl -X POST "https://$YOUR-DOMAIN/search" \
   -d "q=cloudflare" \
   -d "engines=startpage,duckduckgo" \
-  -d "token=$YOUR-TOKEN" # 如果配置了 TOKEN 环境变量
+  -H "Authorization: Bearer $YOUR-TOKEN" # 如果配置了 TOKEN 环境变量
 ```
 
 ## API 接口说明
@@ -177,9 +178,12 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 | `q` / `query` | `string` | yes    | 搜索关键词                                | `cloudflare`   |
 | `engines`     | `string` | no     | 指定搜索引擎，多个用逗号分隔              | `startpage,duckduckgo` |
 | `language`    | `string` | no     | 语言/地区提示，传给支持的搜索引擎         | `en`、`zh-CN` |
+| `location`    | `string` | no     | 位置提示，默认 `auto`，使用 Cloudflare `request.cf.city` / `region`；传 `off` 可关闭 | `auto`、`上海`、`off` |
 | `time_range`  | `string` | no     | 时间范围：`day`、`week`、`month`、`year` | `month` |
 | `pageno`      | `number` | no     | 从 0 开始的页码                           | `0` |
-| `token`       | `string` | no/yse | 访问令牌（当配置了 TOKEN 环境变量时必填） | `$YOUR-TOKEN`  |
+| `token`       | `string` | no/yes | 兼容参数形式的访问令牌；更推荐使用 `Authorization: Bearer ...` | `$YOUR-TOKEN`  |
+
+默认会启用 `location=auto`。当 Cloudflare 在 `request.cf` 中提供城市或地区时，Worker 会把它追加到实际上游搜索词里，并在响应中同时返回原始 `query` 和实际使用的 `effective_query`。如果是 MCP / 代理调用，这个位置代表调用方或代理出口 IP；如需关闭可传 `location=off`。
 
 **支持的搜索引擎**：
 
@@ -188,14 +192,23 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 - `mojeek` - Mojeek 搜索
 - `duckduckgo` - DuckDuckGo 搜索
 - `brave` - Brave 搜索
+- `qwant` - Qwant Lite 搜索
+- `yahoo` - Yahoo 搜索
 
 #### 返回值
 
 ```typescript
 {
   query: string;                    // 搜索关键词
+  effective_query: string;          // 追加位置后的实际上游搜索词
+  location: string | null;          // 解析到的位置
+  location_source: string;          // auto / explicit / disabled / unavailable
   number_of_results: number;        // 结果总数
   enabled_engines: string[];        // 启用的搜索引擎列表
+  skipped_engines: Array<{          // 搜索前被跳过的请求引擎
+    engine: string;
+    reason: string;
+  }>;
   unresponsive_engines: string[];   // 无响应的搜索引擎列表
   results: Array<{
     title: string;                  // 结果标题
@@ -212,10 +225,17 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 # GET 请求
 curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=startpage,duckduckgo"
 
+# 默认 location=auto，会在 Cloudflare 提供地理信息时使用访问者城市/地区
+curl "https://$YOUR-DOMAIN/search?q=%E6%98%8E%E5%A4%A9%E5%A4%A9%E6%B0%94"
+
+# 手动指定或关闭位置增强
+curl "https://$YOUR-DOMAIN/search?q=%E6%98%8E%E5%A4%A9%E5%A4%A9%E6%B0%94&location=%E4%B8%8A%E6%B5%B7"
+curl "https://$YOUR-DOMAIN/search?q=cloudflare&location=off"
+
 # JSON POST 请求
 curl -X POST "https://$YOUR-DOMAIN/search" \
   -H "Content-Type: application/json" \
-  -d '{"q":"cloudflare","engines":["startpage","duckduckgo"],"language":"zh-CN","time_range":"month"}'
+  -d '{"q":"cloudflare","engines":["startpage","duckduckgo"],"language":"zh-CN","location":"off","time_range":"month"}'
 
 # 表单 POST 请求
 curl -X POST "https://$YOUR-DOMAIN/search" \
@@ -228,8 +248,12 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 ```json
 {
   "query": "cloudflare",
+  "effective_query": "cloudflare 上海",
+  "location": "上海",
+  "location_source": "auto",
   "number_of_results": 15,
   "enabled_engines": ["startpage", "duckduckgo", "brave", "mojeek", "bing"],
+  "skipped_engines": [],
   "unresponsive_engines": [],
   "results": [
     {
@@ -259,6 +283,8 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 | **Brave**      | HTML 结果解析（已去掉 `eval`） | -                             | fallback 2 |
 | **Mojeek**     | 简单 HTML 解析                 | -                             | fallback 3 |
 | **Bing**       | HTML / RSS 搜索解析            | -                             | fallback 4 |
+| **Qwant**      | Qwant Lite HTML 解析           | -                             | 可选 |
+| **Yahoo**      | HTML 搜索解析                  | -                             | 可选 |
 
 ### 基本工作方案
 
@@ -287,6 +313,8 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 | `HEALTH_FAILURE_THRESHOLD` | `string` | `"2"` | 引擎进入冷却前允许的连续失败次数                |
 | `HEALTH_COOLDOWN_SECONDS` | `string` | `"180"` | 引擎冷却时间（秒）                            |
 | `HEALTH_STATE_TTL_SECONDS` | `string` | `"3600"` | 引擎健康状态在 KV 中的保留时间（秒）          |
+| `CORS_ALLOWED_ORIGINS` | `string`/`array` | `*` | 允许发起浏览器请求的来源；设置具体域名可收紧 CORS |
+| `CORS_ALLOWED_HEADERS` | `string`/`array` | `Authorization,Content-Type,x-api-key` | 允许的 CORS 请求头 |
 | `TOKEN`           | `string` | `null`   | 访问令牌，配置后启用鉴权，保护服务不被滥用        |
 
 **注意**：
@@ -311,6 +339,7 @@ CACHE_TTL_SECONDS = "300"
 STALE_CACHE_TTL_SECONDS = "1800"
 RATE_LIMIT_MAX_REQUESTS = "60"
 HEALTH_STATE_TTL_SECONDS = "3600"
+CORS_ALLOWED_ORIGINS = "https://app.example.com"
 TOKEN = "your-secret-token-here"
 
 [[kv_namespaces]]
@@ -410,15 +439,19 @@ const byEngine = data.results.reduce((acc, result) => {
 2. 在请求时传入 token：
 
 ```bash
-# 访问首页
-https://$YOUR-DOMAIN?token=$YOUR-TOKEN
+# 首页
+# 打开页面后，在内置 token 输入框中填写
 
-# 使用 query/body 的 token 参数 请求 API
-curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
+# 推荐：Authorization 头
+curl "https://$YOUR-DOMAIN/search?q=cloudflare" \
+  -H "Authorization: Bearer $YOUR-TOKEN"
 
 curl -X POST "https://$YOUR-DOMAIN/search" \
   -d "q=cloudflare" \
-  -d "token=$YOUR-TOKEN"
+  -H "Authorization: Bearer $YOUR-TOKEN"
+
+# 兼容旧用法：仍支持 query/body 里的 token 参数
+curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
 ```
 
 ## 常见问题
@@ -431,7 +464,7 @@ A: 可能原因：
 - 搜索关键词没有相关结果
 - 搜索引擎限制了访问频率
 
-可以查看返回的 `unresponsive_engines` 字段了解哪些引擎没有响应。
+可以查看返回的 `skipped_engines` 和 `unresponsive_engines` 字段，了解哪些引擎在搜索前被过滤或在搜索时无响应。
 
 ### Q: 如何提高搜索速度？
 

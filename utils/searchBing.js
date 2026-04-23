@@ -1,7 +1,12 @@
 import { ApiError } from "./errors.js";
 import {
+  fetchSearchText,
+  isChallengeResponse,
+  throwBlockedUpstreamError,
+} from "./engineRequest.js";
+import {
   ensureAbsoluteUrl,
-  fetchText,
+  getAcceptLanguageHeader,
   mapLanguage,
   mapTimeRange,
   resolvePageNumber,
@@ -32,6 +37,13 @@ const XML_ENTITIES = {
   quot: '"',
   apos: "'",
 };
+
+const BING_CHALLENGE_PATTERNS = [
+  /\bid=["']b_captcha["']\b/i,
+  /\bb_captcha\b/i,
+  /\/turing\//i,
+  /\/challenge\.aspx/i,
+];
 
 function decodeBase64(value) {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
@@ -70,6 +82,29 @@ function decodeXmlEntities(value) {
   );
 }
 
+function isBingChallengeResponse(source) {
+  const text = String(source || "");
+  const hasChallengeMessage =
+    /\bverify\s+you\s+are\s+(?:a\s+)?human\b/i.test(text) ||
+    /\bunusual\s+traffic\b/i.test(text);
+  const hasOrganicMarkers =
+    /\bid=["']b_results["']/i.test(text) ||
+    /\bb_algo\b/i.test(text) ||
+    /<main\b/i.test(text);
+
+  return (
+    isChallengeResponse(text, BING_CHALLENGE_PATTERNS) ||
+    (hasChallengeMessage && !hasOrganicMarkers)
+  );
+}
+
+function throwBingChallengeError(surface) {
+  throwBlockedUpstreamError({
+    engine: "Bing",
+    surface,
+  });
+}
+
 export function extractBingRedirectUrl(bingUrl) {
   if (!bingUrl || !bingUrl.includes("bing.com/ck/a?")) {
     return bingUrl;
@@ -91,6 +126,10 @@ export function extractBingRedirectUrl(bingUrl) {
 }
 
 export function parseBingResults(html) {
+  if (isBingChallengeResponse(html)) {
+    throwBingChallengeError("html");
+  }
+
   const root = parseHtml(html);
   const candidateNodes = collectBingResultNodes(root);
   const results = [];
@@ -147,6 +186,10 @@ function extractXmlTagContent(source, tagName) {
 }
 
 export function parseBingRssResults(xml) {
+  if (isBingChallengeResponse(xml)) {
+    throwBingChallengeError("rss");
+  }
+
   const items = [...xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)];
   const results = normalizeResults(
     items.map((item) => {
@@ -250,6 +293,7 @@ function collectBingResultNodes(root) {
 function buildBingSearchUrl({ query, language, time_range }) {
   const searchUrl = new URL("https://www.bing.com/search");
   searchUrl.searchParams.set("q", query);
+  searchUrl.searchParams.set("pq", query);
   searchUrl.searchParams.set("form", "QBLH");
 
   const timeFilter = mapTimeRange(time_range, BING_TIME_RANGE);
@@ -274,28 +318,49 @@ function buildBingRssUrl({ query, language, time_range }) {
 }
 
 async function fetchBingHtml(searchUrl, { signal, language }) {
-  const html = await fetchText(searchUrl.toString(), {
+  const locale = mapLanguage(language, BING_LANGUAGE, BING_LANGUAGE.en);
+  return fetchSearchText(searchUrl.toString(), {
+    engine: "bing",
+    engineLabel: "Bing",
     signal,
     language,
-    headers: {
-      priority: "u=0, i",
-      "sec-fetch-dest": "document",
-      "sec-fetch-mode": "navigate",
-      "sec-fetch-site": "none",
-      "upgrade-insecure-requests": "1",
-    },
+    acceptLanguage: locale
+      ? `${locale.mkt},${locale.mkt.split("-")[0]};q=0.9,en;q=0.8`
+      : getAcceptLanguageHeader(language),
+    cookies: locale
+      ? {
+          _EDGE_CD: `m=${locale.mkt}&u=${locale.mkt}`,
+          _EDGE_S: `mkt=${locale.mkt}&ui=${locale.setlang}`,
+        }
+      : undefined,
+    blockedStatuses: [403, 429],
+    isBlocked: isBingChallengeResponse,
+    blockedSurface: "html",
   });
-
-  return html;
 }
 
 async function fetchBingRss(searchUrl, { signal, language }) {
-  return fetchText(searchUrl.toString(), {
+  const locale = mapLanguage(language, BING_LANGUAGE, BING_LANGUAGE.en);
+  return fetchSearchText(searchUrl.toString(), {
+    engine: "bing",
+    engineLabel: "Bing",
     signal,
     language,
+    acceptLanguage: locale
+      ? `${locale.mkt},${locale.mkt.split("-")[0]};q=0.9,en;q=0.8`
+      : getAcceptLanguageHeader(language),
+    cookies: locale
+      ? {
+          _EDGE_CD: `m=${locale.mkt}&u=${locale.mkt}`,
+          _EDGE_S: `mkt=${locale.mkt}&ui=${locale.setlang}`,
+        }
+      : undefined,
     headers: {
       accept: "application/rss+xml,application/xml;q=0.9,text/xml;q=0.8,*/*;q=0.7",
     },
+    blockedStatuses: [403, 429],
+    isBlocked: isBingChallengeResponse,
+    blockedSurface: "rss",
   });
 }
 

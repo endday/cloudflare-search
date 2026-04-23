@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import worker from "../worker.js";
 import { resetHealthState } from "../utils/health.js";
 import { resetRateLimitState } from "../utils/rateLimit.js";
+import { resetStartpageRequestState } from "../utils/searchStartpage.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -16,6 +17,8 @@ const fixtures = {
   startpage: await fixture("startpage.html"),
   duckduckgo: await fixture("duckduckgo.html"),
   mojeek: await fixture("mojeek.html"),
+  qwant: await fixture("qwant.html"),
+  yahoo: await fixture("yahoo.html"),
 };
 
 function sleep(ms) {
@@ -50,8 +53,16 @@ class MemoryKv {
   }
 }
 
-function createSearchRequest(path, init = {}) {
-  return new Request(`https://search.example.test${path}`, init);
+function createSearchRequest(path, init = {}, cf) {
+  const request = new Request(`https://search.example.test${path}`, init);
+
+  if (cf) {
+    Object.defineProperty(request, "cf", {
+      value: cf,
+    });
+  }
+
+  return request;
 }
 
 function getEngineName(url) {
@@ -73,6 +84,14 @@ function getEngineName(url) {
     return "mojeek";
   }
 
+  if (hostname.includes("qwant.com")) {
+    return "qwant";
+  }
+
+  if (hostname.includes("search.yahoo.com")) {
+    return "yahoo";
+  }
+
   throw new Error(`Unhandled fetch URL: ${url}`);
 }
 
@@ -81,7 +100,11 @@ function installFetchStub(responses = {}) {
 
   globalThis.fetch = async (url, init = {}) => {
     const engineName = getEngineName(url);
-    calls.push(engineName);
+    const requestUrl = new URL(String(url));
+
+    if (!(engineName === "startpage" && requestUrl.pathname === "/")) {
+      calls.push(engineName);
+    }
 
     const response = responses[engineName] ?? fixtures[engineName];
     if (response instanceof Error) {
@@ -117,6 +140,7 @@ function createEnv(overrides = {}) {
 beforeEach(() => {
   resetHealthState();
   resetRateLimitState();
+  resetStartpageRequestState();
 });
 
 afterEach(() => {
@@ -141,6 +165,103 @@ test("handles GET /search requests", async () => {
   assert.equal(response.headers.get("X-Search-Fallback-Path"), "bing");
   assert.ok(response.headers.get("X-Search-Request-Id"));
   assert.ok(response.headers.get("Server-Timing")?.includes("bing;dur="));
+});
+
+test("uses request.cf city as default auto location", async () => {
+  installFetchStub();
+
+  const response = await worker.fetch(
+    createSearchRequest(
+      "/search?q=%E6%98%8E%E5%A4%A9%E5%A4%A9%E6%B0%94%E5%A6%82%E4%BD%95",
+      {},
+      {
+        city: "上海",
+        region: "Shanghai",
+        country: "CN",
+        timezone: "Asia/Shanghai",
+      }
+    ),
+    createEnv()
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(payload.query, "明天天气如何");
+  assert.equal(payload.effective_query, "明天天气如何 上海");
+  assert.equal(payload.location, "上海");
+  assert.equal(payload.location_source, "auto");
+  assert.deepEqual(payload.location_context.client, {
+    city: "上海",
+    region: "Shanghai",
+    country: "CN",
+    timezone: "Asia/Shanghai",
+  });
+});
+
+test("allows explicit location and location opt-out", async () => {
+  installFetchStub();
+
+  const explicitResponse = await worker.fetch(
+    createSearchRequest("/search?q=weather&location=Hong%20Kong"),
+    createEnv()
+  );
+  const explicitPayload = await explicitResponse.json();
+
+  assert.equal(explicitResponse.status, 200);
+  assert.equal(explicitPayload.effective_query, "weather Hong Kong");
+  assert.equal(explicitPayload.location_source, "explicit");
+
+  const disabledResponse = await worker.fetch(
+    createSearchRequest(
+      "/search?q=weather&location=off",
+      {},
+      {
+        city: "上海",
+      }
+    ),
+    createEnv()
+  );
+  const disabledPayload = await disabledResponse.json();
+
+  assert.equal(disabledResponse.status, 200);
+  assert.equal(disabledPayload.effective_query, "weather");
+  assert.equal(disabledPayload.location, null);
+  assert.equal(disabledPayload.location_source, "disabled");
+});
+
+test("returns JSON for unknown routes", async () => {
+  const response = await worker.fetch(createSearchRequest("/missing"), createEnv());
+  const payload = await response.json();
+
+  assert.equal(response.status, 404);
+  assert.equal(payload.code, "NOT_FOUND");
+  assert.ok(response.headers.get("X-Search-Request-Id"));
+});
+
+test("supports configurable CORS preflight responses", async () => {
+  const response = await worker.fetch(
+    createSearchRequest("/search", {
+      method: "OPTIONS",
+      headers: {
+        Origin: "https://app.example.test",
+        "Access-Control-Request-Headers": "authorization,content-type,x-custom-header",
+      },
+    }),
+    createEnv({
+      CORS_ALLOWED_ORIGINS: "https://app.example.test",
+    })
+  );
+
+  assert.equal(response.status, 204);
+  assert.equal(
+    response.headers.get("Access-Control-Allow-Origin"),
+    "https://app.example.test"
+  );
+  assert.equal(
+    response.headers.get("Access-Control-Allow-Headers"),
+    "authorization,content-type,x-custom-header"
+  );
+  assert.ok(response.headers.get("X-Search-Request-Id"));
 });
 
 test("renders token input on homepage when auth is enabled", async () => {
@@ -198,6 +319,24 @@ test("handles form POST /search requests", async () => {
   assert.equal(response.status, 200);
   assert.deepEqual(payload.enabled_engines, ["duckduckgo"]);
   assert.equal(payload.results[0].engine, "duckduckgo");
+});
+
+test("handles newly added Qwant and Yahoo engines", async () => {
+  const calls = installFetchStub();
+
+  const response = await worker.fetch(
+    createSearchRequest("/search?q=cloudflare&engines=qwant,yahoo"),
+    createEnv({
+      FALLBACK_MIN_RESULTS: "1",
+      HEDGED_FALLBACK_DELAY_MS: "1000",
+    })
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(payload.enabled_engines, ["qwant", "yahoo"]);
+  assert.deepEqual(calls, ["qwant", "yahoo"]);
+  assert.equal(response.headers.get("X-Search-Fallback-Path"), "qwant,yahoo");
 });
 
 test("rejects requests without configured token", async () => {
@@ -388,6 +527,12 @@ test("skips engines that do not support requested time filters", async () => {
   assert.equal(response.status, 200);
   assert.deepEqual(calls, ["bing"]);
   assert.deepEqual(payload.enabled_engines, ["bing"]);
+  assert.deepEqual(payload.skipped_engines, [
+    {
+      engine: "startpage",
+      reason: "unsupported_time_range",
+    },
+  ]);
 });
 
 test("infers zh-CN for Han queries when language is omitted", async () => {
@@ -432,6 +577,36 @@ test("skips engines that do not support requested pages", async () => {
   assert.equal(response.status, 200);
   assert.deepEqual(calls, ["mojeek"]);
   assert.deepEqual(payload.enabled_engines, ["mojeek"]);
+  assert.deepEqual(payload.skipped_engines, [
+    {
+      engine: "bing",
+      reason: "unsupported_pageno",
+    },
+    {
+      engine: "duckduckgo",
+      reason: "unsupported_pageno",
+    },
+  ]);
+});
+
+test("reports unsupported requested engines", async () => {
+  const calls = installFetchStub();
+
+  const response = await worker.fetch(
+    createSearchRequest("/search?q=cloudflare&engines=bing,unknown"),
+    createEnv()
+  );
+  const payload = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls, ["bing"]);
+  assert.deepEqual(payload.enabled_engines, ["bing"]);
+  assert.deepEqual(payload.skipped_engines, [
+    {
+      engine: "unknown",
+      reason: "unsupported_engine",
+    },
+  ]);
 });
 
 test("moves unhealthy engines behind healthy fallbacks with KV state", async () => {

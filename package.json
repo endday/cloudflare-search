@@ -30,7 +30,9 @@
     "mojeek",
     "brave",
     "duckduckgo",
-    "bing"
+    "bing",
+    "qwant",
+    "yahoo"
   ],
   "author": "Yrobot",
   "license": "GPL-3.0",
