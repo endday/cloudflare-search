@@ -93,7 +93,7 @@ export function getSearchHtml() {
                   </h1>
                   <div class="mt-6 text-base text-zinc-600 dark:text-zinc-400">
                     <p class="">
-                      基于 Cloudflare Workers 的生产级搜索网关。优先使用 Bing 主引擎，结果不足或失败时按 Startpage、Mojeek、DuckDuckGo、Brave 顺序兜底。
+                      基于 Cloudflare Workers 的生产级搜索网关。优先使用 Startpage，结果不足或失败时按 DuckDuckGo、Brave、Mojeek、Bing 顺序兜底。
                     </p>
                     <p class="mt-2">
                       如果这个项目对你有帮助，可以 
@@ -331,14 +331,14 @@ export function getSearchHtml() {
                         <pre class="text-xs overflow-x-auto"><code>{
   "query": "cloudflare",              // 搜索关键词
   "number_of_results": 15,            // 结果总数
-  "enabled_engines": ["bing", ...],   // 启用的搜索引擎列表
+  "enabled_engines": ["startpage", ...], // 启用的搜索引擎列表
   "unresponsive_engines": [],         // 无响应的搜索引擎列表
   "results": [
     {
       "title": "...",                 // 结果标题
       "description": "...",           // 结果描述
       "url": "...",                   // 结果链接
-      "engine": "bing"                // 来源引擎
+      "engine": "startpage"           // 来源引擎
     }
   ]
 }</code></pre>
@@ -356,35 +356,35 @@ export function getSearchHtml() {
                     <div class="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-800/50">
                       <div class="flex items-center justify-between mb-2">
                         <div class="font-medium text-zinc-900 dark:text-zinc-100">Bing</div>
-                        <span class="text-xs text-green-600 dark:text-green-400">主引擎</span>
+                        <span class="text-xs text-green-600 dark:text-green-400">兜底</span>
                       </div>
-                      <p class="text-xs text-zinc-600 dark:text-zinc-400">优先抓取 Bing HTML，失败或结果不足时进入 fallback 链路</p>
+                      <p class="text-xs text-zinc-600 dark:text-zinc-400">作为最后一层补充来源，避免单一引擎结果质量波动</p>
                     </div>
                     <div class="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-800/50">
                       <div class="flex items-center justify-between mb-2">
                         <div class="font-medium text-zinc-900 dark:text-zinc-100">Startpage</div>
-                        <span class="text-xs text-green-600 dark:text-green-400">高优先级</span>
+                        <span class="text-xs text-green-600 dark:text-green-400">默认优先</span>
                       </div>
-                      <p class="text-xs text-zinc-600 dark:text-zinc-400">无 Key 搜索补充，适合作为 Workers fallback 引擎</p>
+                      <p class="text-xs text-zinc-600 dark:text-zinc-400">当前默认首选来源，结果质量更稳定，适合作为主入口</p>
                     </div>
                     <div class="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-800/50">
                       <div class="flex items-center justify-between mb-2">
                         <div class="font-medium text-zinc-900 dark:text-zinc-100">Mojeek</div>
-                        <span class="text-xs text-green-600 dark:text-green-400">高优先级</span>
+                        <span class="text-xs text-green-600 dark:text-green-400">补充来源</span>
                       </div>
                       <p class="text-xs text-zinc-600 dark:text-zinc-400">页面结构简单，作为独立索引补充来源</p>
                     </div>
                     <div class="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-800/50">
                       <div class="flex items-center justify-between mb-2">
                         <div class="font-medium text-zinc-900 dark:text-zinc-100">DuckDuckGo</div>
-                        <span class="text-xs text-green-600 dark:text-green-400">fallback</span>
+                        <span class="text-xs text-green-600 dark:text-green-400">高优先级</span>
                       </div>
                       <p class="text-xs text-zinc-600 dark:text-zinc-400">注重隐私保护的搜索引擎,无需配置</p>
                     </div>
                     <div class="rounded-lg bg-zinc-50 p-4 dark:bg-zinc-800/50">
                       <div class="flex items-center justify-between mb-2">
                         <div class="font-medium text-zinc-900 dark:text-zinc-100">Brave Search</div>
-                        <span class="text-xs text-green-600 dark:text-green-400">fallback</span>
+                        <span class="text-xs text-green-600 dark:text-green-400">高优先级</span>
                       </div>
                       <p class="text-xs text-zinc-600 dark:text-zinc-400">独立的搜索引擎，直接解析 HTML，已移除 eval</p>
                     </div>
@@ -651,8 +651,8 @@ export function getSearchHtml() {
         ? \`curl -H "Authorization: Bearer \${exampleToken}" "\${currentOrigin}/search?q=cloudflare"\`
         : currentOrigin + '/search?q=cloudflare';
       const postExample = TOKEN_ENABLED
-        ? \`curl -X POST "\${currentOrigin}/search" \\\\\n  -H "Authorization: Bearer \${exampleToken}" \\\\\n  -d "q=cloudflare&engines=bing,startpage"\`
-        : \`curl -X POST "\${currentOrigin}/search" -d "q=cloudflare&engines=bing,startpage"\`;
+        ? \`curl -X POST "\${currentOrigin}/search" \\\\\n  -H "Authorization: Bearer \${exampleToken}" \\\\\n  -d "q=cloudflare&engines=startpage,duckduckgo"\`
+        : \`curl -X POST "\${currentOrigin}/search" -d "q=cloudflare&engines=startpage,duckduckgo"\`;
       const mcpEnv = [
         \`        "CF_SEARCH_URL": "\${currentOrigin}"\`,
         ...(TOKEN_ENABLED ? [\`        "CF_SEARCH_TOKEN": "\${exampleToken}"\`] : []),

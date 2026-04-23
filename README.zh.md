@@ -10,7 +10,7 @@
 
 ## 特性
 
-- 🔍 **优先级搜索网关** - 默认先用 Bing，再按 Startpage、Mojeek、DuckDuckGo、Brave 顺序 fallback
+- 🔍 **优先级搜索网关** - 默认先用 Startpage，再按 DuckDuckGo、Brave、Mojeek、Bing 顺序 fallback
 - 🤖 **AI 增强 (MCP)** - 原生支持 Model Context Protocol，一键为 **OpenClaw** / **Claude Code** / **Codex** 添加搜索工具
 - ⚡ **智能 fallback** - 达到足够的去重结果后提前停止，不再固定全并行
 - 🛡️ **容错机制** - 分类处理超时、解析失败、上游异常，并对不健康引擎做冷却
@@ -18,7 +18,7 @@
 - 💾 **KV 缓存** - 支持新鲜缓存和 `stale-if-error` 兜底缓存
 - 🚦 **简单限流** - 基于 token / IP 的固定窗口限流，可绑定 KV 跨 isolate 共享状态
 - ⏱️ **超时控制** - 可配置请求超时时间，避免长时间等待
-- 🪂 **Hedged Fallback** - 主引擎过慢时提前触发 fallback，降低尾延迟
+- 🪂 **Hedged Fallback** - 当前引擎过慢时提前触发 fallback，降低尾延迟
 - 🔒 **Token 鉴权** - 支持 Token 认证，保护服务不被滥用
 - 🌍 **CORS 支持** - 完整的跨域资源共享支持
 - 🎨 **Web 界面** - 提供简洁的搜索界面，方便测试
@@ -147,7 +147,7 @@ https://$YOUR-DOMAIN/
 curl "https://$YOUR-DOMAIN/search?q=cloudflare"
 
 # 指定搜索引擎
-curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=bing,startpage"
+curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=startpage,duckduckgo"
 
 # 使用 token 鉴权（如果配置了 TOKEN 环境变量）
 curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
@@ -160,7 +160,7 @@ curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
 ```bash
 curl -X POST "https://$YOUR-DOMAIN/search" \
   -d "q=cloudflare" \
-  -d "engines=bing,startpage" \
+  -d "engines=startpage,duckduckgo" \
   -d "token=$YOUR-TOKEN" # 如果配置了 TOKEN 环境变量
 ```
 
@@ -175,7 +175,7 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 | 参数          | 类型     | 必填   | 说明                                      | 示例           |
 | ------------- | -------- | ------ | ----------------------------------------- | -------------- |
 | `q` / `query` | `string` | yes    | 搜索关键词                                | `cloudflare`   |
-| `engines`     | `string` | no     | 指定搜索引擎，多个用逗号分隔              | `bing,startpage` |
+| `engines`     | `string` | no     | 指定搜索引擎，多个用逗号分隔              | `startpage,duckduckgo` |
 | `language`    | `string` | no     | 语言/地区提示，传给支持的搜索引擎         | `en`、`zh-CN` |
 | `time_range`  | `string` | no     | 时间范围：`day`、`week`、`month`、`year` | `month` |
 | `pageno`      | `number` | no     | 从 0 开始的页码                           | `0` |
@@ -210,17 +210,17 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 
 ```bash
 # GET 请求
-curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=bing,startpage"
+curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=startpage,duckduckgo"
 
 # JSON POST 请求
 curl -X POST "https://$YOUR-DOMAIN/search" \
   -H "Content-Type: application/json" \
-  -d '{"q":"cloudflare","engines":["bing","startpage"],"language":"zh-CN","time_range":"month"}'
+  -d '{"q":"cloudflare","engines":["startpage","duckduckgo"],"language":"zh-CN","time_range":"month"}'
 
 # 表单 POST 请求
 curl -X POST "https://$YOUR-DOMAIN/search" \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "q=cloudflare&engines=bing,startpage"
+  -d "q=cloudflare&engines=startpage,duckduckgo"
 ```
 
 #### 响应示例
@@ -229,14 +229,14 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 {
   "query": "cloudflare",
   "number_of_results": 15,
-  "enabled_engines": ["bing", "startpage", "mojeek", "duckduckgo", "brave"],
+  "enabled_engines": ["startpage", "duckduckgo", "brave", "mojeek", "bing"],
   "unresponsive_engines": [],
   "results": [
     {
       "title": "Cloudflare - The Web Performance & Security Company",
       "description": "Cloudflare is on a mission to help build a better Internet...",
       "url": "https://www.cloudflare.com/",
-      "engine": "bing"
+      "engine": "startpage"
     },
     {
       "title": "Cloudflare Workers",
@@ -254,15 +254,15 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 
 | 引擎           | 说明                           | 是否需要配置                  | 默认角色 |
 | -------------- | ------------------------------ | ----------------------------- | -------- |
-| **Bing**       | HTML 搜索解析                  | -                             | 主引擎   |
-| **Startpage**  | 序列化 SERP 结果               | -                             | fallback 1 |
-| **Mojeek**     | 简单 HTML 解析                 | -                             | fallback 2 |
-| **DuckDuckGo** | HTML 搜索接口                  | -                             | fallback 3 |
-| **Brave**      | HTML 结果解析（已去掉 `eval`） | -                             | fallback 4 |
+| **Startpage**  | 序列化 SERP 结果               | -                             | 默认优先 |
+| **DuckDuckGo** | HTML 搜索接口                  | -                             | fallback 1 |
+| **Brave**      | HTML 结果解析（已去掉 `eval`） | -                             | fallback 2 |
+| **Mojeek**     | 简单 HTML 解析                 | -                             | fallback 3 |
+| **Bing**       | HTML / RSS 搜索解析            | -                             | fallback 4 |
 
 ### 基本工作方案
 
-1. **优先级 fallback**：默认按 `bing,startpage,mojeek,duckduckgo,brave` 顺序执行
+1. **优先级 fallback**：默认按 `startpage,duckduckgo,brave,mojeek,bing` 顺序执行
 2. **提前停止**：当去重后的结果达到 `FALLBACK_MIN_RESULTS` 且至少 `FALLBACK_MIN_CONTRIBUTING_ENGINES` 个引擎贡献结果后停止继续请求
 3. **结果归一化**：统一标题、描述、URL，并做去重与简单排序
 4. **健康度控制**：连续失败的引擎会临时进入冷却；绑定 `SEARCH_STATE_KV` 后可跨 isolate 共享
@@ -275,9 +275,9 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 
 | 变量名            | 类型     | 默认值   | 说明                                              |
 | ----------------- | -------- | -------- | ------------------------------------------------- |
-| `DEFAULT_ENGINES` | `string`/`array` | `bing,startpage,mojeek,duckduckgo,brave` | 引擎优先级 / fallback 顺序 |
+| `DEFAULT_ENGINES` | `string`/`array` | `startpage,duckduckgo,brave,mojeek,bing` | 引擎优先级 / fallback 顺序 |
 | `DEFAULT_TIMEOUT` | `string` | `"4000"` | 单个搜索引擎的超时时间（毫秒）                    |
-| `HEDGED_FALLBACK_DELAY_MS` | `string` | `"400"` | 主引擎慢于该阈值时提前触发 fallback（毫秒） |
+| `HEDGED_FALLBACK_DELAY_MS` | `string` | `"400"` | 当前引擎慢于该阈值时提前触发 fallback（毫秒） |
 | `FALLBACK_MIN_RESULTS` | `string` | `"6"` | 达到该去重结果数后停止 fallback                   |
 | `FALLBACK_MIN_CONTRIBUTING_ENGINES` | `string` | `"2"` | 提前停止前至少需要贡献结果的引擎数 |
 | `CACHE_TTL_SECONDS` | `string` | `"300"` | KV 缓存 TTL；设为 `0` 可关闭缓存                  |
@@ -303,7 +303,7 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 
 ```toml
 [vars]
-DEFAULT_ENGINES = "bing,startpage,mojeek,duckduckgo,brave"
+DEFAULT_ENGINES = "startpage,duckduckgo,brave,mojeek,bing"
 DEFAULT_TIMEOUT = "4000"
 HEDGED_FALLBACK_DELAY_MS = "400"
 FALLBACK_MIN_CONTRIBUTING_ENGINES = "2"
@@ -336,7 +336,7 @@ id = "your-state-kv-namespace-id"
 
 ```javascript
 const response = await fetch(
-  "https://$YOUR-DOMAIN/search?q=javascript&engines=bing,startpage",
+  "https://$YOUR-DOMAIN/search?q=javascript&engines=startpage,duckduckgo",
 );
 const data = await response.json();
 console.log(`找到 ${data.number_of_results} 个结果`);
@@ -361,7 +361,7 @@ async function search(query) {
 收集多个搜索引擎的结果进行对比分析：
 
 ```javascript
-const engines = ["bing", "startpage", "duckduckgo"];
+const engines = ["startpage", "duckduckgo", "brave"];
 const results = await fetch(
   `https://$YOUR-DOMAIN/search?q=AI&engines=${engines.join(",")}`,
 );
@@ -447,15 +447,15 @@ A: 建议：
 
 A: 默认顺序如下：
 
-1. `bing`
-2. `startpage`
-3. `mojeek`
-4. `duckduckgo`
-5. `brave`
+1. `startpage`
+2. `duckduckgo`
+3. `brave`
+4. `mojeek`
+5. `bing`
 
 当去重后的结果数达到 `FALLBACK_MIN_RESULTS` 且至少 `FALLBACK_MIN_CONTRIBUTING_ENGINES` 个引擎贡献结果后，网关会停止继续请求。
 
-如果主引擎超过 `HEDGED_FALLBACK_DELAY_MS` 仍未返回，网关会提前启动下一个 fallback，以降低尾延迟。
+如果当前引擎超过 `HEDGED_FALLBACK_DELAY_MS` 仍未返回，网关会提前启动下一个 fallback，以降低尾延迟。
 
 ### Q: 如何保护服务不被滥用？
 

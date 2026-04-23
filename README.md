@@ -10,7 +10,7 @@ English | [中文](./README.zh.md)
 
 ## Features
 
-- 🔍 **Prioritized Search Gateway** - Use Bing first, then Startpage, Mojeek, DuckDuckGo, and Brave as fallback engines
+- 🔍 **Prioritized Search Gateway** - Use Startpage first, then DuckDuckGo, Brave, Mojeek, and Bing as fallback engines
 - 🤖 **AI Enhanced (MCP)** - Native support for Model Context Protocol, one-click search tool integration for **OpenClaw** / **Claude Code** / **Codex**
 - ⚡ **Smart Fallback** - Stop after enough deduplicated results instead of always querying every engine
 - 🛡️ **Fault Tolerance** - Timeout, parse, and upstream errors are classified; unhealthy engines are cooled down automatically
@@ -145,7 +145,7 @@ Search using query parameters:
 curl "https://$YOUR-DOMAIN/search?q=cloudflare"
 
 # Specify search engines
-curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=bing,startpage"
+curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=startpage,duckduckgo"
 
 # Use token authentication (if TOKEN env var is configured)
 curl "https://$YOUR-DOMAIN/search?q=cloudflare&token=$YOUR-TOKEN"
@@ -158,7 +158,7 @@ Submit search by POST form:
 ```bash
 curl -X POST "https://$YOUR-DOMAIN/search" \
 	-d "q=cloudflare" \
-	-d "engines=bing,startpage" \
+	-d "engines=startpage,duckduckgo" \
 	-d "token=$YOUR-TOKEN" # if TOKEN env var is configured
 ```
 
@@ -173,7 +173,7 @@ Used to execute search queries and return aggregated results.
 | Parameter     | Type     | Required | Description                                                | Example          |
 | ------------- | -------- | -------- | ---------------------------------------------------------- | ---------------- |
 | `q` / `query` | `string` | yes      | Search keyword                                             | `cloudflare`     |
-| `engines`     | `string` | no       | Specify search engines, separated by commas               | `bing,startpage` |
+| `engines`     | `string` | no       | Specify search engines, separated by commas               | `startpage,duckduckgo` |
 | `language`    | `string` | no       | Language/region hint passed to supported engines          | `en`, `zh-CN`    |
 | `time_range`  | `string` | no       | Time filter: `day`, `week`, `month`, or `year`            | `month`          |
 | `pageno`      | `number` | no       | Zero-based page number                                    | `0`              |
@@ -208,17 +208,17 @@ Used to execute search queries and return aggregated results.
 
 ```bash
 # GET request
-curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=bing,startpage"
+curl "https://$YOUR-DOMAIN/search?q=cloudflare&engines=startpage,duckduckgo"
 
 # JSON POST request
 curl -X POST "https://$YOUR-DOMAIN/search" \
 	-H "Content-Type: application/json" \
-	-d '{"q":"cloudflare","engines":["bing","startpage"],"language":"en","time_range":"month"}'
+	-d '{"q":"cloudflare","engines":["startpage","duckduckgo"],"language":"en","time_range":"month"}'
 
 # Form POST request
 curl -X POST "https://$YOUR-DOMAIN/search" \
 	-H "Content-Type: application/x-www-form-urlencoded" \
-	-d "q=cloudflare&engines=bing,startpage"
+	-d "q=cloudflare&engines=startpage,duckduckgo"
 ```
 
 #### Response Example
@@ -227,14 +227,14 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 {
 	"query": "cloudflare",
 	"number_of_results": 15,
-	"enabled_engines": ["bing", "startpage", "mojeek", "duckduckgo", "brave"],
+	"enabled_engines": ["startpage", "duckduckgo", "brave", "mojeek", "bing"],
 	"unresponsive_engines": [],
 	"results": [
 		{
 			"title": "Cloudflare - The Web Performance & Security Company",
 			"description": "Cloudflare is on a mission to help build a better Internet...",
 			"url": "https://www.cloudflare.com/",
-			"engine": "bing"
+			"engine": "startpage"
 		},
 		{
 			"title": "Cloudflare Workers",
@@ -252,15 +252,15 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 
 | Engine         | Description                  | Configuration Required          | Default Role |
 | -------------- | ---------------------------- | ------------------------------- | ------------ |
-| **Bing**       | HTML search parser           | -                               | Primary      |
-| **Startpage**  | Serialized SERP payload      | -                               | Fallback 1   |
-| **Mojeek**     | Simple HTML parser           | -                               | Fallback 2   |
-| **DuckDuckGo** | HTML search endpoint         | -                               | Fallback 3   |
-| **Brave**      | HTML result parser, no `eval` | -                              | Fallback 4   |
+| **Startpage**  | Serialized SERP payload       | -                               | Default first |
+| **DuckDuckGo** | HTML search endpoint          | -                               | Fallback 1    |
+| **Brave**      | HTML result parser, no `eval` | -                               | Fallback 2    |
+| **Mojeek**     | Simple HTML parser            | -                               | Fallback 3    |
+| **Bing**       | HTML / RSS search parser      | -                               | Fallback 4    |
 
 ### Basic Working Approach
 
-1. **Prioritized Fallback**: Try engines in order (`bing,startpage,mojeek,duckduckgo,brave` by default)
+1. **Prioritized Fallback**: Try engines in order (`startpage,duckduckgo,brave,mojeek,bing` by default)
 2. **Early Stop**: Stop when deduplicated results reach `FALLBACK_MIN_RESULTS` and at least `FALLBACK_MIN_CONTRIBUTING_ENGINES` engines have contributed
 3. **Normalization**: Normalize titles/descriptions, canonicalize URLs, and remove duplicates
 4. **Health Control**: Repeated failures temporarily move an engine behind healthier fallbacks; bind `SEARCH_STATE_KV` to share state across isolates
@@ -273,7 +273,7 @@ curl -X POST "https://$YOUR-DOMAIN/search" \
 
 | Variable Name | Type | Default | Description |
 | ------------- | ---- | ------- | ----------- |
-| `DEFAULT_ENGINES` | `string`/`array` | `bing,startpage,mojeek,duckduckgo,brave` | Priority/fallback order |
+| `DEFAULT_ENGINES` | `string`/`array` | `startpage,duckduckgo,brave,mojeek,bing` | Priority/fallback order |
 | `DEFAULT_TIMEOUT` | `string` | `"4000"` | Timeout per engine request, in milliseconds |
 | `HEDGED_FALLBACK_DELAY_MS` | `string` | `"400"` | Start the next fallback early when the current engine is slow |
 | `FALLBACK_MIN_RESULTS` | `string` | `"6"` | Stop fallback after this many deduplicated results |
@@ -301,7 +301,7 @@ Edit the `[vars]` section in `wrangler.toml`:
 
 ```toml
 [vars]
-DEFAULT_ENGINES = "bing,startpage,mojeek,duckduckgo,brave"
+DEFAULT_ENGINES = "startpage,duckduckgo,brave,mojeek,bing"
 DEFAULT_TIMEOUT = "4000"
 HEDGED_FALLBACK_DELAY_MS = "400"
 FALLBACK_MIN_CONTRIBUTING_ENGINES = "2"
@@ -334,7 +334,7 @@ Build your own aggregated search API and combine results from multiple search en
 
 ```javascript
 const response = await fetch(
-	"https://$YOUR-DOMAIN/search?q=javascript&engines=bing,startpage",
+	"https://$YOUR-DOMAIN/search?q=javascript&engines=startpage,duckduckgo",
 );
 const data = await response.json();
 console.log(`Found ${data.number_of_results} results`);
@@ -359,7 +359,7 @@ async function search(query) {
 Collect results from multiple search engines for comparative analysis:
 
 ```javascript
-const engines = ["bing", "startpage", "duckduckgo"];
+const engines = ["startpage", "duckduckgo", "brave"];
 const results = await fetch(
 	`https://$YOUR-DOMAIN/search?q=AI&engines=${engines.join(",")}`,
 );
@@ -449,11 +449,11 @@ A: Recommendations:
 
 A: The gateway tries engines in order. By default:
 
-1. `bing`
-2. `startpage`
-3. `mojeek`
-4. `duckduckgo`
-5. `brave`
+1. `startpage`
+2. `duckduckgo`
+3. `brave`
+4. `mojeek`
+5. `bing`
 
 It stops once deduplicated results reach `FALLBACK_MIN_RESULTS` and at least `FALLBACK_MIN_CONTRIBUTING_ENGINES` engines have contributed results.
 
